@@ -1,0 +1,9 @@
+# What the panel needs to run. This is the list for the Pi.
+#
+# The display itself is NOT here: on the Pi it comes from hzeller's rgbmatrix
+# bindings, which are built from source rather than installed with pip. See
+# README, "On the Pi". On a laptop it comes from requirements-dev.txt.
+requests>=2.31
+fastapi>=0.110
+uvicorn>=0.27
+pillow>=10

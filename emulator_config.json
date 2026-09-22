@@ -1,0 +1,25 @@
+{
+  "pixel_size": 8,
+  "pixel_style": "square",
+  "pixel_glow": 6,
+  "display_adapter": "browser",
+  "suppress_adapter_load_errors": false,
+  "browser": {
+    "_comment": "Open http://localhost:8888 to see the panel.",
+    "port": 8888,
+    "target_fps": 30,
+    "fps_display": false,
+    "quality": 90,
+    "image_border": true,
+    "debug_text": false,
+    "screenshot_path": "screenshots",
+    "image_format": "JPEG",
+    "open_immediately": false
+  },
+  "log_level": "info",
+  "pixel_outline": 0,
+  "allow_adapter_fallback": true,
+  "icon_path": null,
+  "emulator_title": "Sports Bug",
+  "suppress_font_warnings": false
+}

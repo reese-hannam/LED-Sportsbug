@@ -1,0 +1,49 @@
+# Run the panel at boot.
+#
+#   sudo cp deploy/sportsbug.service /etc/systemd/system/
+#   sudo systemctl enable --now sportsbug
+#   journalctl -u sportsbug -f          # logs
+#
+# Adjust WorkingDirectory if the checkout isn't at /home/pi/led-sports-bug.
+
+[Unit]
+Description=LED Sports Bug panel
+# Not After=network-online.target on purpose: the panel should light up even
+# with no network -- showing "NO WIFI" and the setup hotspot is precisely the
+# case that must work, and waiting for a network that isn't coming would leave
+# the display dark exactly when someone needs to be told what to do.
+#
+# NetworkManager IS required though: app/wifi.py drives it to scan, join and
+# raise the hotspot.
+After=network.target NetworkManager.service
+Wants=network.target NetworkManager.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/led-sports-bug
+ExecStart=/home/pi/led-sports-bug/.venv/bin/python -m app.main
+# Panel wiring (mapping, panel type, slowdown) lives outside the checkout so
+# it survives an app upgrade and can be changed without editing source. The
+# dash means "carry on if it's missing" -- the defaults in app/matrix.py are
+# the same values, so a missing file degrades to working, not to broken.
+EnvironmentFile=-/etc/default/sportsbug
+# The GPIO the panel drives needs root, and the C library is told not to drop
+# privileges afterwards (see matrix.create_matrix).
+User=root
+
+# Isolating one core for the panel is what stops the display flickering when
+# the poller or the web server does real work. Pair with `isolcpus=3` on the
+# kernel command line in /boot/cmdline.txt.
+CPUAffinity=3
+
+Restart=always
+RestartSec=5
+# A crash loop shouldn't hammer the APIs; back off rather than spin.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# Laptop: everything in requirements.txt, plus the software panel and tooling.
+#
+# Kept separate because RGBMatrixEmulator pulls in numpy, which is a slow,
+# heavy build on a Pi Zero -- and the panel never imports it there. app/matrix.py
+# uses the real bindings when they exist, so nothing here is needed on hardware.
+-r requirements.txt
+RGBMatrixEmulator>=0.19
+numpy>=1.26
+ruff>=0.6

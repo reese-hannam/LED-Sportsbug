@@ -1,0 +1,30 @@
+# Python environment and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Your own settings: favourites, fantasy rosters, bets, parlays, alert styles.
+# Deliberately not tracked -- it's personal state, not code, and app/config.py
+# regenerates it from DEFAULTS on first run.
+config.json
+
+# Recorded games for replay. Large (~5 MB and growing), and rebuildable with
+#     .venv/bin/python tools/record_nfl.py --seasontype pre --year 2026 --week 3
+data/nfl/*.json
+data/nfl/plays/
+
+# Team logos: downloaded by tools/fetch_logos.py (the installer runs it),
+# not redistributed here. Your own overrides in _custom/ ARE tracked.
+assets/logos/*
+!assets/logos/_custom/
+
+# Renders from tools/preview.py and the emulator's screenshot key.
+preview*.png
+screenshots/
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp

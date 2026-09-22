@@ -1,0 +1,2766 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sports Bug Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  /* ------------------------------------------------------------------
+     Sports Bug — control surface.
+
+     Designed as a piece of broadcast equipment rather than a web
+     dashboard: amber phosphor on near-black, silkscreen section labels,
+     monospace for every number, thin hard rules. It's the console for a
+     glowing amber LED panel, so it reads like one.
+
+     Layout is ordered by how often something is touched:
+       ON AIR   -- what's on the panel this second. Always visible.
+       GAMES    -- the thing you actually watch. Always visible.
+       BETS     -- live progress. Always visible; the entry form folds away.
+       SETUP    -- set-once settings, collapsed by default with the
+                   current value shown in the header so you rarely open it.
+     ------------------------------------------------------------------ */
+
+  :root {
+    --bg:       #0a0a0c;
+    --panel:    #131519;
+    --panel-2:  #1a1d23;
+    --line:     #24272f;
+    --line-2:   #333844;
+    --text:     #e9ebf0;
+    --dim:      #7b8394;
+    --dimmer:   #565d6c;
+    --amber:    #ffb000;
+    --amber-lo: #4a3608;
+    --live:     #33d17a;
+    --red:      #ff5c5c;
+    --pin:      #ff9040;
+    --r:        6px;
+
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* Systemic guard: `hidden` and a class that sets its own `display` have
+     equal specificity, and the author rule wins. Without this, hiding any
+     flex/grid element silently does nothing. */
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 56px;
+    overflow-x: hidden;
+  }
+
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 18px; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ---- header ---------------------------------------------------- */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(10,10,12,.94); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .headbar {
+    max-width: 960px; margin: 0 auto; padding: 12px 18px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .brand {
+    font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+    margin: 0; white-space: nowrap;
+  }
+  .brand i {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--amber); box-shadow: 0 0 9px var(--amber); margin-right: 9px;
+    vertical-align: 1px;
+  }
+  .brand span { color: var(--dimmer); font-weight: 400; letter-spacing: .12em; }
+
+  .statusbar {
+    margin-left: auto; display: flex; align-items: center; gap: 14px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--dim);
+  }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--dimmer); flex: none; }
+  .pulse.ok  { background: var(--live); box-shadow: 0 0 8px var(--live); }
+  .pulse.err { background: var(--red);  box-shadow: 0 0 8px var(--red); }
+  .statusbar a { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--line-2); }
+  .statusbar a:hover { color: var(--amber); border-color: var(--amber); }
+
+  /* segmented mode switch */
+  .seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 2px; }
+  .seg button {
+    background: none; border: 0; color: var(--dim); font: inherit; font-weight: 600;
+    font-size: 12px; letter-spacing: .1em; padding: 6px 16px; border-radius: 4px; cursor: pointer;
+    transition: color .12s, background .12s;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--amber); color: #14100a; }
+  /* A sport that's live on the panel is marked wherever it appears, because
+     the segment now means "whose settings am I editing", not "what's showing". */
+  .seg button.airing::after {
+    content: ''; position: absolute; top: 4px; right: 4px;
+    width: 5px; height: 5px; border-radius: 50%; background: var(--live);
+  }
+  .seg button { position: relative; }
+  /* Lifestyle is not a fourth sport -- it's the other mode entirely -- so it
+     sits behind a divider and lights a different colour when it's on. */
+  .seg .segsplit { width: 1px; align-self: stretch; background: var(--line-2); margin: 4px 5px; }
+  .seg button.life[aria-pressed="true"] { background: var(--live); color: #06180d; }
+
+  /* ---- tabs -------------------------------------------------------- */
+  .tabbar { display: flex; gap: 2px; max-width: 960px; margin: 0 auto; padding: 0 18px; }
+  .tabbar button {
+    background: none; border: 0; border-bottom: 2px solid transparent; color: var(--dim);
+    font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; padding: 10px 14px; cursor: pointer;
+    transition: color .12s, border-color .12s;
+  }
+  .tabbar button:hover { color: var(--text); }
+  .tabbar button[aria-selected="true"] { color: var(--amber); border-bottom-color: var(--amber); }
+  .tabbar .dot {
+    display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--amber); margin-left: 6px; vertical-align: 2px;
+  }
+
+  /* ---- fantasy ------------------------------------------------------ */
+  .fteam { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel);
+           margin-bottom: 10px; overflow: hidden; }
+  .fteam-head { display: flex; align-items: center; gap: 11px; padding: 12px 14px;
+                border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .fteam-name { font-weight: 600; font-size: 13.5px; color: var(--amber); }
+  .fteam-count { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
+  .fteam-body { padding: 4px 14px 14px; }
+  .posgroup { margin-top: 12px; }
+  .poslabel { font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase;
+              color: var(--dimmer); font-weight: 600; margin-bottom: 6px; }
+  .fplayer { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center;
+             gap: 11px; padding: 7px 9px; border-radius: 5px; background: var(--panel-2);
+             margin-bottom: 4px; }
+  .fplayer.bench { opacity: .5; }
+  .fplayer .pname { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fplayer .pteam { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .fplayer .del { background: none; border: 0; color: var(--dimmer); cursor: pointer;
+                  font-size: 16px; line-height: 1; padding: 0 3px; }
+  .fplayer .del:hover { color: var(--red); }
+  /* starter switch */
+  .sw-toggle { position: relative; width: 34px; height: 18px; flex: none; cursor: pointer; }
+  .sw-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .sw-track { position: absolute; inset: 0; background: #2b2f38; border-radius: 9px; transition: background .15s; }
+  .sw-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+                     border-radius: 50%; background: var(--dimmer); transition: transform .15s, background .15s; }
+  .sw-toggle input:checked + .sw-track { background: var(--amber-lo); }
+  .sw-toggle input:checked + .sw-track::after { transform: translateX(16px); background: var(--amber); }
+  .sw-toggle input:focus-visible + .sw-track { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  .addrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 7px; margin-top: 12px; }
+
+  /* alert-style rows with a little panel mock */
+  .styrow { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 14px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+            padding: 11px 13px; margin-bottom: 7px; }
+  .styrow .cat { font-size: 12.5px; font-weight: 500; }
+  .styrow .eg { font-size: 11.5px; color: var(--dimmer); font-family: var(--mono); margin-top: 2px; }
+  /* 128x64 panel, drawn at 2x with the alert region highlighted */
+  .mock { width: 64px; height: 32px; border: 1px solid var(--line-2); border-radius: 3px;
+          background: #0e0f12; position: relative; flex: none; overflow: hidden; }
+  .mock i { position: absolute; left: 0; right: 0; background: var(--amber); display: block; }
+  .mock.full i  { top: 0; bottom: 0; opacity: .85; }
+  .mock.banner i { bottom: 0; height: 9px; opacity: .85; }
+  .mock.off i   { display: none; }
+  .mock .ghost { position: absolute; inset: 4px 5px auto 5px; height: 3px; background: #2a2e37; }
+  .mock .ghost + .ghost { top: 11px; width: 60%; }
+  .dur { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 92px; }
+  .dur input[type=range] { margin: 0; width: 100%; height: 14px; }
+  .dur .lab { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+  @media (max-width: 620px) {
+    .styrow { grid-template-columns: 1fr auto; row-gap: 10px; }
+    .styrow .dur { grid-column: 1 / -1; width: 100%; }
+  }
+
+  /* ---- on air ----------------------------------------------------- */
+  .onair {
+    margin-top: 18px; border: 1px solid var(--line-2); border-radius: var(--r);
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+    gap: 16px; padding: 13px 15px; position: relative; overflow: hidden;
+  }
+  .onair::before {
+    content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--amber);
+  }
+  .onair.alerting { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber-lo) inset; }
+  .onair.alerting::before { animation: blink 1s steps(2,end) infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+
+  .onair-tag {
+    font-size: 9.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--amber);
+    font-weight: 600; padding-left: 8px; white-space: nowrap;
+  }
+  .onair-main { min-width: 0; font-family: var(--mono); font-size: 15px; }
+  .onair-sub { font-family: var(--sans); font-size: 12px; color: var(--dim); margin-top: 3px;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .onair-acts { display: flex; gap: 8px; flex: none; }
+
+  /* ---- section shells --------------------------------------------- */
+  section { margin-top: 26px; }
+  .rule {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 11px;
+    font-size: 10px; letter-spacing: .17em; text-transform: uppercase; color: var(--dimmer);
+    font-weight: 600;
+  }
+  .rule::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+  .rule .n { font-family: var(--mono); color: var(--dim); letter-spacing: .05em; }
+
+  .fold { border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); overflow: hidden; }
+  .fold + .fold { margin-top: 8px; }
+  .fold-head {
+    width: 100%; background: none; border: 0; color: var(--text); font: inherit; cursor: pointer;
+    display: flex; align-items: center; gap: 11px; padding: 12px 14px; text-align: left;
+  }
+  .fold-head:hover { background: var(--panel-2); }
+  .fold-head .chev { color: var(--dimmer); font-size: 9px; transition: transform .16s; flex: none; }
+  .fold-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  .fold-title { font-size: 12.5px; font-weight: 500; }
+  .fold-sum {
+    margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%;
+  }
+  .fold-body { padding: 4px 14px 15px; border-top: 1px solid var(--line); }
+
+  /* ---- controls ---------------------------------------------------- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 14px; }
+  .field + .field { margin-top: 16px; }
+  .field-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .field-row span:first-child { font-size: 12.5px; color: var(--dim); }
+  .val { font-family: var(--mono); color: var(--amber); font-weight: 500; font-size: 13px; }
+
+  input[type=range] {
+    width: 100%; accent-color: var(--amber); margin-top: 9px; height: 18px;
+  }
+  input[type=range]:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+
+  button.btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2);
+    border-radius: 5px; padding: 7px 13px; font: inherit; font-size: 12.5px; cursor: pointer;
+    white-space: nowrap; transition: border-color .12s, color .12s, background .12s;
+  }
+  button.btn:hover { border-color: var(--dim); background: #21252c; }
+  button.btn.primary { background: var(--amber); border-color: var(--amber); color: #14100a; font-weight: 600; }
+  button.btn.primary:hover { background: #ffc233; border-color: #ffc233; }
+  button.btn.warn { color: var(--pin); border-color: #4d3620; }
+  button.btn.warn:hover { border-color: var(--pin); }
+  button.btn.tiny { padding: 3px 9px; font-size: 11px; }
+  button.btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  label.check { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; color: var(--dim); font-size: 12.5px; }
+  label.check input { accent-color: var(--amber); width: 15px; height: 15px; }
+
+  select, input[type=number], input[type=text], input[type=datetime-local], textarea {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2);
+    border-radius: 5px; padding: 7px 10px; font: inherit; font-size: 12.5px;
+  }
+  textarea { resize: vertical; min-height: 54px; }
+  select { cursor: pointer; }
+  select:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+
+  .note { color: var(--dim); font-size: 12px; margin-top: 10px; line-height: 1.55; }
+  .note b { color: var(--amber); font-weight: 600; font-family: var(--mono); }
+
+  .bar { height: 4px; background: #23262d; border-radius: 2px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--amber); transition: width .4s linear; }
+
+  .empty {
+    color: var(--dimmer); padding: 24px; text-align: center; font-size: 12.5px;
+    border: 1px dashed var(--line); border-radius: var(--r);
+  }
+  .err { color: var(--red); font-size: 12px; margin-top: 9px; font-family: var(--mono); }
+
+  /* ---- games ------------------------------------------------------- */
+  .games { display: flex; flex-direction: column; gap: 6px; }
+  .game {
+    display: grid; grid-template-columns: 3px 1fr auto auto; align-items: center; gap: 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 10px 13px 10px 0; cursor: pointer; overflow: hidden;
+    transition: border-color .12s, background .12s;
+  }
+  .game:hover { border-color: var(--line-2); background: var(--panel-2); }
+  .game.showing { border-color: var(--amber); }
+  .game.pinned  { border-color: var(--pin); }
+  .spine { width: 3px; height: 42px; }
+  .teams { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .team { display: flex; align-items: baseline; gap: 10px; font-family: var(--mono); }
+  /* The rank sits tight against the name it belongs to, not a gap away. */
+  .team .rank + .abbrev { margin-left: -5px; }
+  /* College rank, shown ahead of the abbreviation the way a broadcast does.
+     Fixed width so unranked teams still line their names up. */
+  .rank {
+    font-family: var(--mono); font-size: 10px; font-weight: 600;
+    color: var(--amber); min-width: 16px; text-align: right; flex: none;
+  }
+  /* With one sport on the panel the league is obvious; with several it isn't. */
+  .sporttag {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .08em;
+    color: var(--dimmer); margin-bottom: 2px;
+  }
+  .abbrev { font-weight: 600; letter-spacing: .06em; min-width: 40px; font-size: 13px; }
+  .score  { font-weight: 600; font-size: 16px; min-width: 24px; }
+  .rec    { color: var(--dimmer); font-size: 11.5px; }
+  .meta { text-align: right; font-size: 11.5px; color: var(--dim); white-space: nowrap; font-family: var(--mono); }
+  .meta .period { color: var(--text); font-weight: 600; font-size: 12.5px; }
+  .meta .live { color: var(--live); }
+  .abbrev.fav::after { content: '\2605'; color: var(--amber); font-size: 9px; margin-left: 5px; vertical-align: 2px; }
+
+  .badge {
+    font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600;
+    padding: 4px 8px; border-radius: 4px; border: 1px solid var(--line-2); color: var(--dimmer);
+    white-space: nowrap;
+  }
+  .badge.on      { border-color: var(--pin);   color: var(--pin); }
+  .badge.showing { border-color: var(--amber); color: var(--amber); }
+
+  .bso { display: inline-flex; align-items: center; gap: 10px; }
+  .grp { display: inline-flex; align-items: center; gap: 4px; }
+  .grp b { font-weight: 500; color: var(--dimmer); font-size: 10.5px; }
+  .count { display: inline-flex; gap: 3px; }
+  .count i { width: 5px; height: 5px; border-radius: 50%; background: #2f3440; display: block; }
+  .count i.on { background: var(--amber); }
+  .bases { display: inline-flex; gap: 4px; padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--line); }
+  .diamond { width: 7px; height: 7px; transform: rotate(45deg); background: #2f3440; }
+  .diamond.on { background: var(--amber); }
+
+  /* ---- favourites -------------------------------------------------- */
+  .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 5px; }
+
+  /* Pre-game layout picker. Each option is a 2:1 sketch of the real panel,
+     because the choice is about shape and no wording conveys that as fast. */
+  .looks { display: flex; flex-wrap: wrap; gap: 12px; }
+  .look {
+    border: 1px solid var(--line); border-radius: var(--r); background: var(--panel);
+    padding: 9px; cursor: pointer; font: inherit; color: var(--dim);
+    display: flex; flex-direction: column; gap: 7px; align-items: center;
+  }
+  .look:hover { border-color: var(--line-2); color: var(--text); }
+  .look.on { border-color: var(--amber); background: #1c1810; color: var(--text); }
+  .look .thumb {
+    width: 116px; height: 58px; background: #000; border-radius: 3px;
+    position: relative; overflow: hidden; flex: none;
+  }
+  .look .nm { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
+  /* Sketch pieces -- deliberately crude blocks, not a rendering. */
+  .look .b { position: absolute; background: #4a5060; border-radius: 1px; }
+  .look.on .b { background: #6a6250; }
+  .look .b.logo { background: #2f6fb5; border-radius: 50%; }
+  .look .b.amber { background: var(--amber); opacity: .8; }
+
+  /* Main menu: which sports are on the panel. Deliberately large targets --
+     this is the control people reach for on a phone, mid-game. */
+  .sports { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .sportcard {
+    display: flex; flex-direction: column; gap: 6px; text-align: left;
+    padding: 13px 14px; border: 1px solid var(--line); border-radius: var(--r);
+    background: var(--panel); color: var(--dim); cursor: pointer; font: inherit;
+    position: relative;
+  }
+  .sportcard:hover { border-color: var(--line-2); color: var(--text); }
+  .sportcard.on { border-color: var(--amber); background: #1c1810; color: var(--text); }
+  .sportcard .sc-name { font-family: var(--mono); font-weight: 600; letter-spacing: .06em; font-size: 15px; }
+  .sportcard .sc-sub  { font-size: 11.5px; color: var(--dimmer); }
+  .sportcard.on .sc-sub { color: var(--dim); }
+  /* Rotation order, so a multi-sport panel is predictable rather than a surprise. */
+  .sportcard .sc-ord {
+    position: absolute; top: 9px; right: 10px; font-family: var(--mono);
+    font-size: 10px; color: #14100a; background: var(--amber);
+    border-radius: 9px; padding: 1px 6px; font-weight: 600;
+  }
+  .sportcard:not(.on) .sc-ord { display: none; }
+
+  .chip {
+    display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;
+    padding: 7px 8px; font-size: 11.5px; color: var(--dim); overflow: hidden;
+    transition: border-color .12s, color .12s, background .12s;
+  }
+  .chip:hover { border-color: var(--line-2); color: var(--text); }
+  .chip .sw { width: 3px; height: 18px; border-radius: 2px; flex: none; opacity: .3; }
+  .chip.on { color: var(--text); border-color: var(--amber); background: #1c1810; }
+  .chip.on .sw { opacity: 1; }
+  .chip .ab { font-weight: 600; letter-spacing: .05em; min-width: 28px; font-family: var(--mono); }
+  .chip .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ---- bets -------------------------------------------------------- */
+  .betform { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; align-items: center; }
+  .betform > * { width: 100%; }
+  .ou { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 5px; padding: 2px; }
+  .ou button {
+    flex: 1; background: none; border: 0; color: var(--dim); font: inherit; font-weight: 600;
+    font-size: 11.5px; letter-spacing: .08em; padding: 6px 0; border-radius: 3px; cursor: pointer;
+  }
+  .ou button[aria-pressed="true"] { background: var(--amber); color: #14100a; }
+  .showall { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+
+  .betlist { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .bet {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 10px 12px; display: grid; grid-template-columns: auto 1fr auto auto auto;
+    gap: 12px; align-items: center;
+  }
+  .bet.hit    { border-color: #235c3c; }
+  .bet.busted { border-color: #5c2626; }
+  .bet .who { min-width: 0; }
+  .bet .line1 { display: flex; align-items: baseline; gap: 9px; }
+  .bet .nm { font-weight: 600; letter-spacing: .03em; font-size: 13px; }
+  .bet .st { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden;
+             text-overflow: ellipsis; font-family: var(--mono); }
+  .bet .barwrap { margin-top: 7px; }
+  .bet .val { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; color: var(--text); }
+  .bet .del { background: none; border: 0; color: var(--dimmer); cursor: pointer; font-size: 17px;
+              line-height: 1; padding: 0 3px; }
+  .bet .del:hover { color: var(--red); }
+  .bet input[type=checkbox] { accent-color: var(--amber); width: 15px; height: 15px; }
+
+  .stat {
+    font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600;
+    padding: 4px 8px; border-radius: 4px; border: 1px solid var(--line-2); color: var(--dimmer);
+    white-space: nowrap;
+  }
+  .stat.hit    { border-color: var(--live);  color: var(--live); }
+  .stat.busted { border-color: var(--red);   color: var(--red); }
+  .stat.live   { border-color: var(--amber); color: var(--amber); }
+
+  .parlaybox { border-left: 2px solid var(--amber); padding-left: 12px; margin: 10px 0; }
+  .parlayhead { display: flex; align-items: center; gap: 11px; font-size: 12px; color: var(--dim); margin-bottom: 7px; flex-wrap: wrap; }
+  .parlayhead b { color: var(--amber); font-weight: 600; }
+  .parlaybar { display: flex; gap: 9px; margin-top: 11px; }
+
+  /* ---- lifestyle ----------------------------------------------------- */
+  .lscard {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 10px 12px; display: flex; align-items: center; gap: 12px;
+  }
+  .lscard + .lscard { margin-top: 6px; }
+  .lscard .who { min-width: 0; flex: 1; }
+  .lscard .nm { font-weight: 600; letter-spacing: .03em; font-size: 13px; display: block; }
+  .lscard .st { color: var(--dim); font-size: 11.5px; font-family: var(--mono); }
+  .lsform { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; align-items: center; }
+  .lsform > * { width: 100%; }
+  .slotpicker { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .slotpicker > div { display: flex; flex-direction: column; gap: 4px; min-width: 130px; flex: 1; }
+  .slotpicker label { font-size: 10.5px; color: var(--dim); font-family: var(--mono); letter-spacing: .05em; }
+
+  /* Colour + size, one block per lifestyle screen. */
+  .themebox { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .sw {
+    width: 22px; height: 22px; border-radius: 5px; border: 2px solid transparent;
+    cursor: pointer; padding: 0; outline-offset: 2px;
+  }
+  .sw[aria-pressed="true"] { border-color: var(--text); }
+  .sw.wheel { position: relative; overflow: hidden; border: 2px solid var(--line-2);
+    background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red); }
+  .sw.wheel input { position: absolute; inset: -6px; opacity: 0; cursor: pointer; }
+  .themerow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 9px; }
+  .themerow > .lbl { font-size: 11.5px; color: var(--dim); min-width: 54px; }
+
+  @media (max-width: 560px) {
+    .onair { grid-template-columns: 1fr; gap: 10px; }
+    .onair-acts { justify-content: flex-start; }
+    .fold-sum { max-width: 40%; }
+    .bet { grid-template-columns: auto 1fr auto; }
+    .bet .stat, .bet .del { grid-column: span 1; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="headbar">
+    <h1 class="brand"><i></i>Sports Bug <span>Control</span></h1>
+    <div class="seg" role="group" aria-label="Panel mode">
+      <button id="m-mlb" aria-pressed="false" onclick="setMode('mlb')">MLB</button>
+      <button id="m-nfl" aria-pressed="false" onclick="setMode('nfl')">NFL</button>
+      <button id="m-cfb" aria-pressed="false" onclick="setMode('cfb')">CFB</button>
+      <span class="segsplit" aria-hidden="true"></span>
+      <button id="m-life" class="life" aria-pressed="false"
+              onclick="setLifestyleMode(true)">LIFE</button>
+    </div>
+    <div class="statusbar">
+      <span id="counts">—</span>
+      <span class="pulse" id="pulse"></span>
+      <span id="stale">—</span>
+      <a href="/tv" target="_blank" rel="noopener">TV&nbsp;↗</a>
+    </div>
+  </div>
+  <nav class="tabbar" role="tablist">
+    <button role="tab" aria-selected="false" onclick="setTab('lifestyle')" id="tb-lifestyle" hidden>Lifestyle</button>
+    <button role="tab" aria-selected="true"  onclick="setTab('main')"    id="tb-main">Main</button>
+    <button role="tab" aria-selected="false" onclick="setTab('panel')"   id="tb-panel">Panel</button>
+    <button role="tab" aria-selected="false" onclick="setTab('bets')"    id="tb-bets">Bets</button>
+    <button role="tab" aria-selected="false" onclick="setTab('fantasy')" id="tb-fantasy">Fantasy</button>
+    <button role="tab" aria-selected="false" onclick="setTab('setup')"   id="tb-setup">Setup</button>
+  </nav>
+</header>
+
+<div class="wrap">
+  <div class="tab" id="tab-main">
+  <div class="note" id="sports-idle-note" hidden
+       style="border:1px solid var(--line-2); border-left:3px solid var(--live);
+              border-radius:var(--r); padding:11px 13px; margin-bottom:16px">
+    The panel is in <b>Lifestyle</b> mode, so nothing on this tab is on screen
+    right now. These settings are kept as they are and come straight back when
+    you pick a sport up top.
+  </div>
+
+  <section>
+    <div class="rule">On air</div>
+    <div class="note" style="margin:0 0 12px">
+      Turn on as many sports as you like. The panel cycles them one league at a
+      time in the order shown — every live NFL game, then every live MLB game —
+      and you get alerts from all of them.
+    </div>
+    <div class="sports" id="sportcards"></div>
+
+    <div class="field" style="margin-top:14px">
+      <div class="field-row" style="margin-bottom:8px">
+        <span>Show only my favourite teams</span>
+        <span class="val" id="favonly-sum"></span>
+      </div>
+      <div id="favonly-toggles" style="display:flex; flex-wrap:wrap; gap:16px"></div>
+      <div class="note" style="margin-top:9px">
+        Per sport, and it covers live games and the upcoming schedule alike — so
+        the whole NFL slate plus only your two baseball teams is a valid setup.
+        Pick favourites under Setup → Favourite teams.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rule">Upcoming games</div>
+    <div class="fold">
+      <button class="fold-head" onclick="toggleSection('schedmode')" aria-expanded="true">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Display mode</span>
+        <span class="fold-sum" id="sum-schedmode"></span>
+      </button>
+      <div class="fold-body" id="body-schedmode">
+        <div class="note" style="margin:8px 0 12px">
+          Cycle each sport's upcoming games — today's slate for baseball, this
+          week's schedule for football — instead of an idle screen. College
+          football follows whatever categories you picked on the Panel tab, so
+          &ldquo;Top 25&rdquo; means twenty-five games, not ninety-nine.
+        </div>
+        <label class="check">
+          <input type="checkbox" id="schedmode" onchange="setScheduleMode(this.checked)">
+          Show upcoming games when nothing is live
+        </label>
+        <div class="field" style="margin-top:16px">
+          <div class="field-row" style="margin-bottom:9px">
+            <span>Keep showing them while a game is live</span>
+            <span class="val" id="schedlive-sum"></span>
+          </div>
+          <div id="schedlive-toggles" style="display:flex; flex-wrap:wrap; gap:16px"></div>
+          <div class="note" style="margin:8px 0 0">
+            Per sport, because it isn't one question. With two baseball games
+            on you might want those two plus the NFL's week ahead — and
+            specifically not the rest of today's baseball. Live games still
+            come first within their own sport.
+          </div>
+        </div>
+        <div id="look-block" style="margin-top:16px">
+          <div class="field-row" style="margin-bottom:9px">
+            <span>How a scheduled game looks</span>
+            <span class="val" id="look-sum"></span>
+          </div>
+          <div class="looks" id="look-picker"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rule">Panel settings</div>
+<div class="fold">
+      <button class="fold-head" onclick="toggleSection('display')" aria-expanded="false">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Display &amp; rotation</span>
+        <span class="fold-sum" id="sum-display"></span>
+      </button>
+      <div class="fold-body" id="body-display" hidden>
+        <div class="grid">
+          <div>
+            <div class="field-row"><span>Rotate every</span><span class="val" id="rot-val">10s</span></div>
+            <input type="range" id="rot" min="2" max="60" step="1" value="10" aria-label="Rotate every">
+          </div>
+          <div>
+            <div class="field-row"><span>Brightness</span><span class="val" id="br-val">60</span></div>
+            <input type="range" id="br" min="5" max="100" step="5" value="60" aria-label="Brightness">
+          </div>
+        </div>
+        <div class="field">
+          <label class="check">
+            <input type="checkbox" id="incfin" onchange="save({include_finished:this.checked})">
+            Include finished games in the rotation
+          </label>
+        </div>
+        <div class="field" style="margin-top:4px">
+          <div class="field-row" style="margin-bottom:8px">
+            <span>Team logos</span>
+            <span class="val" id="logo-sum"></span>
+          </div>
+          <div id="logo-toggles" style="display:flex; flex-wrap:wrap; gap:16px"></div>
+          <div class="note" style="margin-top:9px">
+            A logo replaces the colour bar; the abbreviation stays either way, so
+            a mark that shrinks badly still can't leave you guessing. Colours are
+            the real ones — a few dark logos are dim against a black panel, which
+            beats brightening them into the wrong colour.
+          </div>
+        </div>
+      </div>
+    </div>
+
+<div class="fold">
+      <button class="fold-head" onclick="toggleSection('delay')" aria-expanded="false">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Broadcast delay</span>
+        <span class="fold-sum" id="sum-delay"></span>
+      </button>
+      <div class="fold-body" id="body-delay" hidden>
+        <div class="field-row" style="margin-top:10px"><span>Hold everything back by</span><span class="val" id="bd-val">off</span></div>
+        <input type="range" id="bd" min="0" max="300" step="1" value="0" aria-label="Broadcast delay">
+        <div class="note" id="bd-note"></div>
+      </div>
+    </div>
+  </section>
+  </div><!-- /tab-main -->
+
+  <div class="tab" id="tab-panel" hidden>
+
+  <!-- what the panel is showing this second -->
+  <div class="onair" id="onair">
+    <div class="onair-tag" id="onair-tag">On&nbsp;Air</div>
+    <div class="onair-main">
+      <div id="onair-line" class="mono">—</div>
+      <div class="onair-sub" id="onair-sub"></div>
+    </div>
+    <div class="onair-acts">
+      <button class="btn" onclick="post('/api/next')" title="Advance the rotation now">Skip&nbsp;→</button>
+      <button class="btn warn" id="unpin" onclick="post('/api/pin')" hidden>Unpin</button>
+    </div>
+  </div>
+
+  <section id="cfb-cats" hidden>
+    <div class="fold">
+      <button class="fold-head" onclick="toggleSection('cfbcats')" aria-expanded="false">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Which games to show</span>
+        <span class="fold-sum" id="sum-cfbcats"></span>
+      </button>
+      <div class="fold-body" id="body-cfbcats" hidden>
+        <div class="note" style="margin:8px 0 10px">
+          A full FBS Saturday is ~99 games at once. Pick the slices you care
+          about — nothing selected means everything. Your favourite teams always
+          show regardless.
+        </div>
+        <div class="chips" id="cfb-cat-chips"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="fold">
+      <button class="fold-head" onclick="toggleSection('games')" aria-expanded="true">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Games</span>
+        <span class="fold-sum" id="sum-games"></span>
+      </button>
+      <div class="fold-body" id="body-games">
+        <div class="games" id="games" style="margin-top:10px"></div>
+        <div class="err" id="err"></div>
+      </div>
+    </div>
+  </section>
+
+  </div><!-- /tab-panel -->
+
+  <div class="tab" id="tab-lifestyle" hidden>
+  <section>
+    <div class="rule">Sports while you're here</div>
+    <label class="check">
+      <input type="checkbox" id="life-alerts" onchange="save({lifestyle_alerts:this.checked})">
+      Let my favourite teams' scores through
+    </label>
+    <div class="note" id="life-alerts-note"></div>
+  </section>
+
+  <section>
+    <div class="rule">Clock</div>
+    <label class="check">
+      <input type="checkbox" id="clk-on" onchange="save({clock_enabled:this.checked})">
+      Show a clock screen in the rotation
+    </label>
+    <div class="looks" id="clock-picker" style="margin-top:12px"></div>
+    <label class="check" style="margin-top:12px">
+      <input type="checkbox" id="clk-sec" onchange="save({clock_seconds:this.checked})">
+      Show seconds
+    </label>
+    <label class="check">
+      <input type="checkbox" id="clk-date" onchange="save({clock_show_date:this.checked})">
+      Show the date
+    </label>
+    <label class="check" id="clk-dig-wrap">
+      <input type="checkbox" id="clk-dig" onchange="save({clock_analog_digital:this.checked})">
+      Digital time on the dial
+    </label>
+    <div id="theme-clock"></div>
+  </section>
+
+  <section>
+    <div class="rule">Weather</div>
+    <label class="check">
+      <input type="checkbox" id="wx-on" onchange="save({weather_enabled:this.checked})">
+      Show a weather screen in the rotation
+    </label>
+    <div class="lsform" style="margin-top:12px">
+      <input type="text" id="wx-loc" placeholder="City, State or City, Country" oninput="wxError=null">
+      <button class="btn" onclick="setWeatherLocation()">Save location</button>
+      <div class="seg" role="group" aria-label="Units">
+        <button id="wx-f" aria-pressed="true" onclick="setWeatherUnits('f')">&deg;F</button>
+        <button id="wx-c" aria-pressed="false" onclick="setWeatherUnits('c')">&deg;C</button>
+      </div>
+    </div>
+    <div class="note" id="wx-note"></div>
+    <div class="field" style="margin-top:14px">
+      <div class="field-row" style="margin-bottom:8px"><span>What to show</span></div>
+      <div style="display:flex; flex-wrap:wrap; gap:16px">
+        <label class="check">
+          <input type="checkbox" id="wx-time" onchange="save({weather_show_time:this.checked})">
+          Time
+        </label>
+        <label class="check">
+          <input type="checkbox" id="wx-cond" onchange="save({weather_show_conditions:this.checked})">
+          Conditions
+        </label>
+        <label class="check">
+          <input type="checkbox" id="wx-sun" onchange="save({weather_show_sun:this.checked})">
+          Sunrise / sunset
+        </label>
+        <label class="check">
+          <input type="checkbox" id="wx-hilo" onchange="save({weather_show_hilo:this.checked})">
+          High / low
+        </label>
+      </div>
+      <div class="note" style="margin-top:9px">
+        Anything switched off gives its space back to the temperature rather
+        than leaving a gap, so a stripped-down screen just reads bigger.
+      </div>
+    </div>
+    <div id="theme-weather"></div>
+  </section>
+
+  <section>
+    <div class="rule">Message</div>
+    <label class="check">
+      <input type="checkbox" id="msg-on" onchange="save({message_enabled:this.checked})">
+      Show a message screen in the rotation
+    </label>
+    <textarea id="msg-text" rows="3" maxlength="200" placeholder="Type what the panel should say"
+              style="margin-top:12px; width:100%" onchange="save({message_text:this.value})"></textarea>
+    <div class="note" id="msg-note"></div>
+    <div id="theme-message"></div>
+  </section>
+
+  <section>
+    <div class="rule">Countdowns <span class="n" id="cd-count"></span></div>
+    <div class="lsform">
+      <input type="text" id="cd-label" placeholder="Label, e.g. NFL Kickoff" maxlength="40">
+      <input type="datetime-local" id="cd-target">
+      <button class="btn primary" onclick="addCountdown()">Add countdown</button>
+    </div>
+    <div class="note" id="cd-note"></div>
+    <div id="cdlist" style="margin-top:12px"></div>
+    <div id="theme-countdown"></div>
+  </section>
+
+  <section>
+    <div class="rule">Faces <span class="n" id="face-count"></span></div>
+    <div class="note" style="margin:0 0 10px">
+      A face combines a few pieces on one screen — pick a layout, then pick
+      what fills each slot. Every face gets its own switch, so you can keep a
+      few saved and only some running.
+    </div>
+    <input type="text" id="face-name" placeholder="Name, e.g. Simple" maxlength="24" style="max-width:260px">
+    <div class="looks" id="face-layout-picker" style="margin-top:10px"></div>
+    <div class="slotpicker" id="face-slots"></div>
+    <div class="note" id="face-note"></div>
+    <button class="btn primary" onclick="addFace()" style="margin-top:10px">Save face</button>
+    <div id="facelist" style="margin-top:16px"></div>
+  </section>
+  </div><!-- /tab-lifestyle -->
+
+  <div class="tab" id="tab-bets" hidden>
+  <section>
+    <div class="rule">Bets <span class="n" id="bet-count"></span></div>
+
+    <div class="fold">
+      <button class="fold-head" onclick="toggleSection('betform')" aria-expanded="false">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Add a bet</span>
+        <span class="fold-sum" id="sum-betform">player props &amp; parlays</span>
+      </button>
+      <div class="fold-body" id="body-betform" hidden>
+        <label class="check showall" id="bf-showall-wrap" hidden>
+          <input type="checkbox" id="bf-showall" onchange="onTeamPicked()">
+          Show all players
+        </label>
+        <label class="check showall" id="bf-statall-wrap" hidden>
+          <input type="checkbox" id="bf-statall" onchange="onPlayerPicked()">
+          Show all markets
+        </label>
+        <div class="betform">
+          <select id="bf-game" onchange="onGamePicked()" aria-label="Game"></select>
+          <select id="bf-team" onchange="onTeamPicked()" aria-label="Team"></select>
+          <select id="bf-player" onchange="onPlayerPicked()" aria-label="Player"></select>
+          <select id="bf-stat" onchange="updateGoalHint()" aria-label="Stat"></select>
+          <div class="ou" role="group" aria-label="Direction">
+            <button id="bf-over"  aria-pressed="true"  onclick="setDir('over')">OVER</button>
+            <button id="bf-under" aria-pressed="false" onclick="setDir('under')">UNDER</button>
+          </div>
+          <input type="number" id="bf-line" step="1" min="0" inputmode="numeric"
+                 placeholder="goal, e.g. 80 (80 or more)" aria-label="Goal">
+          <button class="btn primary" onclick="addBet()">Add bet</button>
+        </div>
+        <div class="note" id="bf-stat-note" style="margin-top:8px"></div>
+        <div class="note" id="bf-note"></div>
+      </div>
+    </div>
+
+    <div class="note" id="replay-banner" hidden
+         style="border:1px solid var(--line-2); border-left:3px solid var(--pin);
+                border-radius:var(--r); padding:11px 13px; margin-bottom:10px"></div>
+
+    <div class="betlist" id="betlist"></div>
+
+    <div class="parlaybar" id="parlaybar" hidden>
+      <input type="text" id="pl-name" placeholder="Parlay name" style="flex:1" aria-label="Parlay name">
+      <button class="btn primary" onclick="makeParlay()">Group <span id="pl-count"></span> into parlay</button>
+    </div>
+  </section>
+
+    <section>
+      <div class="rule">Bet alert styles</div>
+      <div class="note" style="margin:0 0 12px">
+        Every leg a play moves gets its own card, and each card names its
+        parlay. A play runs through one whole parlay before the next, then
+        straight bets, then fantasy — and a touchdown's score alert leads them.
+      </div>
+      <label class="check" style="margin:0 0 14px">
+        <input type="checkbox" id="betrot" onchange="save({bets_in_rotation:this.checked})">
+        Show bet and parlay screens between games
+      </label>
+      <div id="bet-style-rows"></div>
+
+      <div class="fold" id="parlay-context-box" style="margin-top:14px" hidden>
+        <button class="fold-head" onclick="toggleSection('plctx')" aria-expanded="false">
+          <span class="chev">&#9656;</span>
+          <span class="fold-title">Whole parlay after its cards</span>
+          <span class="fold-sum" id="sum-plctx"></span>
+        </button>
+        <div class="fold-body" id="body-plctx" hidden>
+          <div class="note" style="margin:8px 0 12px">
+            After a play's cards for a parlay, show that whole ticket once so
+            you can see how it's looking — four legs to a screen, cycling until
+            it's shown them all. The legs that moved are highlighted.
+            <br><br>
+            Full-screen alerts only: a bottom bar has nowhere to put four legs.
+          </div>
+          <label class="check">
+            <input type="checkbox" id="plctx" onchange="setParlayContext(this.checked)">
+            Show the whole parlay after its cards
+          </label>
+          <div id="plctx-timing" style="margin-top:14px" hidden>
+            <div class="field-row">
+              <span>Hold each screen for</span>
+              <span class="val" id="plpage-val">4s</span>
+            </div>
+            <input type="range" id="plpage" min="3" max="20" step="0.5" value="4"
+                   aria-label="Parlay screen hold">
+            <div class="note" id="plctx-note" style="margin-top:9px"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div><!-- /tab-bets -->
+
+  <div class="tab" id="tab-fantasy" hidden>
+    <section>
+      <div class="rule">Fantasy teams <span class="n" id="fantasy-count"></span></div>
+      <div class="fold">
+        <button class="fold-head" onclick="toggleSection('newteam')" aria-expanded="false">
+          <span class="chev">&#9656;</span>
+          <span class="fold-title">Add a team</span>
+          <span class="fold-sum">name it, then fill the roster</span>
+        </button>
+        <div class="fold-body" id="body-newteam" hidden>
+          <div style="display:flex; gap:9px; margin-top:10px">
+            <input type="text" id="ft-name" placeholder="Team name, e.g. Yung Gunz" style="flex:1" aria-label="Fantasy team name">
+            <button class="btn primary" onclick="addFantasyTeam()">Create</button>
+          </div>
+        </div>
+      </div>
+      <div id="fantasy-teams"></div>
+    </section>
+
+    <section>
+      <div class="rule">Alert styles</div>
+      <div class="note" style="margin:0 0 12px">
+        Pick how loud each kind of play is. Full screen takes the panel over;
+        bottom bar keeps the game visible underneath.
+      </div>
+      <div id="style-rows"></div>
+    </section>
+  </div><!-- /tab-fantasy -->
+
+  <div class="tab" id="tab-setup" hidden>
+  <section id="wifi-section">
+    <div class="rule">Wi-Fi <span class="n" id="wifi-state"></span></div>
+    <div class="note" id="wifi-note" style="margin:0 0 10px"></div>
+    <div class="lsform">
+      <button class="btn" onclick="scanWifi()" id="wifi-scan-btn">Scan for networks</button>
+    </div>
+    <div id="wifi-list" style="margin-top:10px"></div>
+    <div id="wifi-join" hidden style="margin-top:12px">
+      <div class="field-row" style="margin-bottom:8px">
+        <span>Joining <b id="wifi-target" class="mono"></b></span>
+        <button class="btn tiny" onclick="cancelJoin()">Cancel</button>
+      </div>
+      <div class="lsform">
+        <input type="password" id="wifi-pass" placeholder="Wi-Fi password"
+               autocomplete="off" autocapitalize="none" spellcheck="false">
+        <button class="btn primary" onclick="joinWifi()">Join</button>
+      </div>
+      <div class="note" id="wifi-join-note"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="rule">Setup</div>
+
+    
+
+    <div class="fold">
+      <button class="fold-head" onclick="toggleSection('alerts')" aria-expanded="false">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Alerts</span>
+        <span class="fold-sum" id="sum-alerts"></span>
+      </button>
+      <div class="fold-body" id="body-alerts">
+        <div class="note" style="margin-top:8px">
+          Scoring plays in your favourite teams' games interrupt the panel.
+        </div>
+        <div class="grid" style="margin-top:14px">
+          <div>
+            <div class="field-row"><span>Alert holds for</span><span class="val" id="al-val">8s</span></div>
+            <input type="range" id="al" min="2" max="30" step="1" value="8" aria-label="Alert duration">
+          </div>
+          <div style="display:flex; flex-direction:column; gap:12px; justify-content:center">
+            <label class="check">
+              <input type="checkbox" id="alon" onchange="save({alerts_enabled:this.checked})">
+              Alerts enabled
+            </label>
+            <div style="display:flex; gap:9px; flex-wrap:wrap">
+              <button class="btn" onclick="post('/api/alert/test')">Test popup</button>
+              <button class="btn primary" id="demo-btn" onclick="toggleDemo()">Run demo</button>
+            </div>
+            <div class="note" id="demo-note"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    
+
+    <div class="fold">
+      <button class="fold-head" onclick="toggleSection('favs')" aria-expanded="false">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">Favourite teams</span>
+        <span class="fold-sum" id="sum-favs"></span>
+      </button>
+      <div class="fold-body" id="body-favs" hidden>
+        <div style="display:flex; justify-content:flex-end; margin:8px 0 10px">
+          <button class="btn tiny" onclick="clearFavs()">Clear all</button>
+        </div>
+        <div class="chips" id="chips"></div>
+      </div>
+    </div>
+
+    <div class="fold" id="replay-sec" hidden>
+      <button class="fold-head" onclick="toggleSection('source')" aria-expanded="false">
+        <span class="chev">&#9656;</span>
+        <span class="fold-title">NFL source</span>
+        <span class="fold-sum" id="sum-source"></span>
+      </button>
+      <div class="fold-body" id="body-source" hidden>
+        <div style="display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap">
+          <select id="rec" onchange="post('/api/replay/' + this.value).then(refresh)" style="flex:1; min-width:200px"></select>
+          <span id="speed-wrap" hidden style="font-size:12.5px; color:var(--dim)">
+            speed <span class="val" id="sp-val">8×</span>
+          </span>
+        </div>
+        <input type="range" id="sp" min="1" max="40" step="1" value="8" hidden aria-label="Replay speed">
+        <div id="replay-note" class="note"></div>
+      </div>
+    </div>
+
+  </section>
+  </div><!-- /tab-setup -->
+</div>
+
+<script>
+let S = null;
+const $ = id => document.getElementById(id);
+
+async function post(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: body ? {'Content-Type': 'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  // Only /api/settings and /api/mode answer with a whole snapshot; every other
+  // endpoint returns a small {ok: true} receipt. Rendering one of those set S
+  // to the receipt and then threw partway through (renderOnAir reads s.games),
+  // so pinning a game, toggling a sport or hitting Skip left the page
+  // half-drawn until the next two-second poll quietly repaired it.
+  if (r.ok) {
+    const payload = await r.json().catch(() => null);
+    if (payload && payload.games) render(payload);
+    else await refresh();
+  }
+  return r;
+}
+const save    = patch => post('/api/settings', patch);
+// Picking a sport up top is also how you leave lifestyle mode -- the server
+// does that half, so this is one request rather than two.
+const setMode = m => post('/api/mode/' + m)
+  .then(() => { if (currentTab === 'lifestyle') setTab('main'); });
+// Toggling a sport on the panel is separate from focusing its settings: you
+// can edit CFB filters while the panel runs baseball.
+const toggleSport = sp => post('/api/sports/' + sp).then(refresh);
+/* The demo takes the panel through everything it can do -- three live games,
+   a home run, a touchdown, fantasy, then a parlay landing leg by leg -- and
+   puts your games, bets and settings back when it finishes. Handy for filming
+   it, and for seeing what the thing does on the first plug-in. */
+const DEMO_HELP = 'Runs through live games, alerts, fantasy and a parlay landing '
+  + '— about two minutes. Your games and bets come back afterwards.';
+
+function toggleDemo() {
+  const running = !!((S.demo || {}).running);
+  post(running ? '/api/demo/stop' : '/api/demo/start').then(refresh);
+}
+
+const setScheduleMode = on => post('/api/schedule_mode/' + (on ? '1' : '0')).then(refresh);
+function setFavOnly(sport, on) {
+  save({favorites_only: Object.assign({}, S.favorites_only || {}, {[sport]: !!on})});
+}
+
+function setSchedLive(sport, on) {
+  save({schedule_with_live: Object.assign({}, S.schedule_with_live || {}, {[sport]: !!on})});
+}
+
+function renderSchedLive(s) {
+  const on = s.schedule_with_live || {};
+  const box = $('schedlive-toggles');
+  const key = JSON.stringify([s.sports, on]);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = (s.sports || []).map(sp => `
+        <label class="check">
+          <input type="checkbox" ${on[sp] ? 'checked' : ''}
+                 onchange="setSchedLive('${sp}', this.checked)">
+          <span>${sp.toUpperCase()}</span>
+        </label>`).join('');
+  }
+  const chosen = (s.sports || []).filter(sp => on[sp]);
+  $('schedlive-sum').textContent = chosen.length
+    ? chosen.map(x => x.toUpperCase()).join(' ') : 'off';
+}
+
+function renderFavOnly(s) {
+  const on = s.favorites_only || {}, favs = s.all_favorites || {};
+  const box = $('favonly-toggles');
+  const key = JSON.stringify([s.sports, on, Object.fromEntries(
+    (s.sports || []).map(sp => [sp, (favs[sp] || []).length]))]);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = (s.sports || []).map(sp => {
+      const n = (favs[sp] || []).length;
+      // Saying "none picked" is the point: with the switch on and no
+      // favourites, that sport shows nothing, and silence looks like a bug.
+      const warn = on[sp] && !n;
+      return `
+        <label class="check" title="${n} favourite${n === 1 ? '' : 's'}">
+          <input type="checkbox" ${on[sp] ? 'checked' : ''}
+                 onchange="setFavOnly('${sp}', this.checked)">
+          <span${warn ? ' style="color:var(--pin)"' : ''}>${sp.toUpperCase()}${
+            warn ? ' — none picked, shows nothing' : n ? ` (${n})` : ''}</span>
+        </label>`;
+    }).join('');
+  }
+  const live = (s.sports || []).filter(sp => on[sp]);
+  $('favonly-sum').textContent = live.length
+    ? live.map(x => x.toUpperCase()).join(' ') : 'off';
+}
+
+const setLook = k => save({schedule_look: k});
+
+// Crude block sketches of each layout. Shape is the whole decision here, and a
+// sketch says "two rows plus a footer" or "two big logos" faster than a label.
+const LOOK_ART = {
+  rows: `<i class="b logo" style="left:5px;top:6px;width:13px;height:13px"></i>
+         <i class="b" style="left:22px;top:9px;width:26px;height:8px"></i>
+         <i class="b" style="right:6px;top:11px;width:12px;height:4px"></i>
+         <i class="b logo" style="left:5px;top:26px;width:13px;height:13px"></i>
+         <i class="b" style="left:22px;top:29px;width:26px;height:8px"></i>
+         <i class="b" style="right:6px;top:31px;width:12px;height:4px"></i>
+         <i class="b amber" style="left:5px;bottom:6px;width:40px;height:6px"></i>
+         <i class="b" style="right:5px;bottom:6px;width:18px;height:6px"></i>`,
+  matchup: `<i class="b logo" style="left:16px;top:5px;width:25px;height:25px"></i>
+            <i class="b logo" style="right:16px;top:5px;width:25px;height:25px"></i>
+            <i class="b" style="left:20px;top:34px;width:18px;height:8px"></i>
+            <i class="b" style="right:20px;top:34px;width:18px;height:8px"></i>
+            <i class="b amber" style="left:50%;transform:translateX(-50%);bottom:5px;width:62px;height:6px"></i>`,
+};
+
+function renderLookPicker(s) {
+  const looks = s.schedule_looks || [];
+  const box = $('look-picker');
+  const key = JSON.stringify([looks, s.schedule_look]);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = looks.map(l => `
+      <button class="look ${l.key === s.schedule_look ? 'on' : ''}"
+              aria-pressed="${l.key === s.schedule_look}" onclick="setLook('${l.key}')">
+        <span class="thumb">${LOOK_ART[l.key] || ''}</span>
+        <span class="nm">${l.label}</span>
+      </button>`).join('');
+  }
+  const cur = looks.find(l => l.key === s.schedule_look);
+  $('look-sum').textContent = cur ? cur.label : '';
+  // Only meaningful when upcoming games are actually shown.
+  $('look-block').style.opacity = s.schedule_mode ? '' : '.45';
+}
+const setParlayContext = on => postJSON('/api/bets/parlay-context', {enabled: !!on}).then(refresh);
+
+const SPORT_LABEL = { mlb: 'MLB', nfl: 'NFL', cfb: 'College football' };
+
+function renderSportCards(s) {
+  const host = $('sportcards');
+  const active = s.active_sports || [];
+  // Live/total per sport, so the card says whether turning it on is worth it.
+  const tally = {};
+  for (const g of s.games || []) {
+    const t = tally[g.sport] || (tally[g.sport] = { live: 0, total: 0 });
+    t.total++;
+    if (g.state === 'live') t.live++;
+  }
+  const key = JSON.stringify([s.sports, active, tally]);
+  if (host.dataset.key === key) return;   // don't rebuild under the user's finger
+  host.dataset.key = key;
+
+  host.innerHTML = '';
+  // Active sports first, in rotation order, so the order badges read 1, 2, 3
+  // left to right instead of being scattered through a fixed list.
+  const ordered = active.concat((s.sports || []).filter(sp => !active.includes(sp)));
+  for (const sp of ordered) {
+    const on = active.includes(sp);
+    const t = tally[sp];
+    const b = document.createElement('button');
+    b.className = 'sportcard' + (on ? ' on' : '');
+    b.onclick = () => toggleSport(sp);
+    b.setAttribute('aria-pressed', String(on));
+    const ord = on ? `<span class="sc-ord">${active.indexOf(sp) + 1}</span>` : '';
+    // A sport that's off has no games polled, so it has no count to report --
+    // saying "0 live" there would be a lie about the slate, not a fact.
+    const sub = !on ? 'off — tap to add'
+              : t ? `${t.live} live / ${t.total}`
+              : 'loading…';
+    b.innerHTML = ord
+      + `<span class="sc-name">${SPORT_LABEL[sp] || sp.toUpperCase()}</span>`
+      + `<span class="sc-sub">${sub}</span>`;
+    host.appendChild(b);
+  }
+}
+const pin     = id => post('/api/pin/' + id).then(refresh);
+
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    render(s);
+    return s;
+  } catch (e) {
+    $('pulse').className = 'pulse err';
+    $('stale').textContent = 'offline';
+  }
+}
+
+/* ---- collapsible sections ------------------------------------------
+   Every fold remembers its own state per browser. Setup folds default
+   closed (they're set-once); Alerts defaults open because the test
+   button and enable switch get used during a game.                    */
+const COLLAPSE_KEY = 'sportsbug.fold.';
+const DEFAULT_OPEN = { alerts: true, games: true };
+
+function setSection(key, open) {
+  const body = $('body-' + key);
+  if (!body) return;
+  body.hidden = !open;
+  const head = body.previousElementSibling;
+  if (head) head.setAttribute('aria-expanded', String(open));
+  try { localStorage.setItem(COLLAPSE_KEY + key, open ? '1' : '0'); } catch (e) {}
+}
+function toggleSection(key) { setSection(key, $('body-' + key).hidden); }
+
+for (const key of ['betform', 'display', 'alerts', 'delay', 'favs', 'source', 'games', 'cfbcats']) {
+  let open = !!DEFAULT_OPEN[key];
+  try {
+    const stored = localStorage.getItem(COLLAPSE_KEY + key);
+    if (stored !== null) open = stored === '1';
+  } catch (e) {}
+  setSection(key, open);
+}
+
+/* ---- sliders --------------------------------------------------------
+   Wired in JS rather than inline handlers. The previous inline version
+   referenced `rotVal` for an element whose id is `rot-val`, which never
+   resolved -- so the readout stayed frozen for the whole drag.          */
+const dragging = new Set();
+const SLIDERS = {
+  rot: { out: 'rot-val', fmt: v => v + 's',       patch: v => ({ rotate_seconds: +v }) },
+  br:  { out: 'br-val',  fmt: v => String(v),     patch: v => ({ brightness: +v }) },
+  al:  { out: 'al-val',  fmt: v => v + 's',       patch: v => ({ alert_seconds: +v }) },
+  bd:  { out: 'bd-val',  fmt: v => fmtDelay(v),   patch: v => ({ broadcast_delay: +v }) },
+  sp:  { out: 'sp-val',  fmt: v => v + '×',       patch: v => ({ replay_speed: +v }) },
+  // Not a /api/settings field -- it has its own endpoint, so it sends itself.
+  plpage: { out: 'plpage-val', fmt: v => v + 's',
+            send: v => postJSON('/api/bets/parlay-context', { page_seconds: +v }) },
+};
+for (const [id, cfg] of Object.entries(SLIDERS)) {
+  const el = $(id);
+  el.addEventListener('input',       () => { $(cfg.out).textContent = cfg.fmt(el.value); });
+  el.addEventListener('change',      () => (cfg.send ? cfg.send(el.value).then(refresh)
+                                                     : save(cfg.patch(el.value))));
+  el.addEventListener('pointerdown', () => dragging.add(id));
+  el.addEventListener('pointerup',   () => dragging.delete(id));
+  el.addEventListener('pointercancel', () => dragging.delete(id));
+  // Keyboard users never fire pointer events; clear the guard on blur too.
+  el.addEventListener('blur',        () => dragging.delete(id));
+}
+function syncSlider(id, value) {
+  if (dragging.has(id)) return;
+  const cfg = SLIDERS[id];
+  $(id).value = value;
+  $(cfg.out).textContent = cfg.fmt(value);
+}
+
+/* ---- formatting ----------------------------------------------------- */
+function fmtDelay(seconds, precise) {
+  seconds = +seconds;
+  if (seconds <= 0) return 'off';
+  if (seconds < 60) return (precise ? seconds.toFixed(1) : Math.round(seconds)) + 's';
+  const total = Math.round(seconds), m = Math.floor(total / 60), s = total % 60;
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+function fmtStart(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+}
+// "Thu 7:00 PM" — ESPN's own status_detail is a full sentence ("Thu, August
+// 27th at 7:00 PM EDT") which is far too wide for the row, and duplicates the
+// start time we already show.
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  const day = sameDay ? '' : d.toLocaleDateString([], {weekday: 'short'}) + ' ';
+  return day + fmtStart(iso);
+}
+// What goes in the row's period slot.
+function periodLabel(g) {
+  if (g.state === 'pre') return fmtWhen(g.start_utc) || g.status_detail;
+  return g.period || g.status_detail;
+}
+function countDots(label, n, total) {
+  return `<span class="grp"><b>${label}</b><span class="count">${
+    Array.from({length: total}, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('')
+  }</span></span>`;
+}
+function detailLine(g) {
+  const d = g.detail || {};
+  // Pre-game start time already lives in the period slot; records already sit
+  // next to the abbreviations. Nothing left worth a second line.
+  if (g.state !== 'live') return '';
+  if (g.sport === 'mlb') {
+    if (['Middle','End'].includes(d.inning_state)) return '<span class="live">between innings</span>';
+    const bases = (d.bases || []).map(b => `<span class="diamond ${b ? 'on' : ''}"></span>`).join('');
+    return `<span class="bso">${countDots('B', d.balls, 3)}${countDots('S', d.strikes, 2)}`
+         + `${countDots('O', d.outs, 2)}<span class="bases">${bases}</span></span>`;
+  }
+  const bits = [d.clock, d.down_distance, d.yardline].filter(Boolean);
+  return (d.red_zone ? '<span style="color:var(--red)">RZ</span> ' : '') + bits.join(' · ');
+}
+
+/* ---- favourites ------------------------------------------------------ */
+const toggleFav = (sport, ab) => post(`/api/favorite/${sport}/${ab}`).then(refresh);
+const clearFavs = () => post(`/api/favorites/${S.mode}/clear`).then(refresh);
+
+/* ---- college football ------------------------------------------------
+   CFB is scores + favourite-team alerts only, so the Bets and Fantasy tabs
+   are hidden in this mode rather than showing controls that do nothing. */
+function renderCfb(s) {
+  const isCfb = s.mode === 'cfb';
+  $('cfb-cats').hidden = !isCfb;
+  for (const t of ['bets', 'fantasy']) {
+    $('tb-' + t).hidden = isCfb;
+    if (isCfb && !$('tab-' + t).hidden) setTab('panel');
+  }
+  if (!isCfb) return;
+
+  const selected = new Set(s.cfb_filters || []);
+  const cats = [
+    {key: 'top25', label: 'Top 25'},
+    {key: 'top50', label: 'Top 50'},
+    ...(s.cfb_conferences || []).map(c => ({key: 'conf:' + c.id, label: c.short, title: c.name})),
+  ];
+
+  const box = $('cfb-cat-chips');
+  const key = cats.map(c => c.key).join(',');
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = cats.map(c => `
+      <div class="chip" data-cat="${c.key}" title="${c.title || c.label}"
+           onclick="toggleCfbCat('${c.key}')">
+        <span class="ab">${c.label}</span>
+      </div>`).join('');
+  }
+  for (const el of box.children) el.classList.toggle('on', selected.has(el.dataset.cat));
+
+  $('sum-cfbcats').textContent = selected.size
+    ? cats.filter(c => selected.has(c.key)).map(c => c.label).join(', ')
+    : 'all games';
+}
+
+function toggleCfbCat(key) {
+  const next = new Set(S.cfb_filters || []);
+  next.has(key) ? next.delete(key) : next.add(key);
+  postJSON('/api/cfb/filters', {filters: [...next]}).then(refresh);
+}
+
+let cfbTeamGroups = null;   // fetched once; 138 teams don't change mid-season
+
+async function loadCfbTeams() {
+  if (cfbTeamGroups) return cfbTeamGroups;
+  try {
+    const r = await fetch('/api/cfb/teams');
+    cfbTeamGroups = (await r.json()).conferences || [];
+  } catch (e) {
+    cfbTeamGroups = [];
+  }
+  return cfbTeamGroups;
+}
+
+/* College football's favourites picker is grouped by conference -- 138 teams
+   as one flat grid is unusable, and nobody thinks about the sport that way. */
+async function renderCfbFavorites(s) {
+  const favs = new Set(s.favorites);
+  const groups = await loadCfbTeams();
+  const box = $('chips');
+  const key = 'cfb|' + groups.map(g => g.id).join(',');
+
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.style.display = 'block';
+    box.innerHTML = groups.map(g => `
+      <div class="posgroup">
+        <div class="poslabel">${g.name}</div>
+        <div class="chips" style="display:grid">
+          ${g.teams.map(t => `
+            <div class="chip" data-ab="${t.abbrev}" title="${t.name}"
+                 onclick="toggleFav('cfb','${t.abbrev}')">
+              <span class="ab">${t.abbrev}</span><span class="nm">${t.name}</span>
+            </div>`).join('')}
+        </div>
+      </div>`).join('') || '<div class="note">Team list unavailable.</div>';
+  }
+  for (const el of box.querySelectorAll('.chip')) {
+    el.classList.toggle('on', favs.has(el.dataset.ab));
+  }
+  $('sum-favs').textContent = favs.size ? `${favs.size} selected`
+                                        : 'none — no alerts will fire';
+}
+
+function renderFavorites(s) {
+  if (s.mode === 'cfb') { renderCfbFavorites(s); return; }
+  const favs = new Set(s.favorites);
+  const key = s.mode + '|' + s.roster.map(t => t.abbrev).join(',');
+  const box = $('chips');
+  box.style.display = '';
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = s.roster.map(t => `
+      <div class="chip" data-ab="${t.abbrev}" title="${t.location} ${t.name} — ${t.group}"
+           onclick="toggleFav('${s.mode}','${t.abbrev}')">
+        <span class="sw" style="background:${colorOf(s, t.abbrev)}"></span>
+        <span class="ab">${t.abbrev}</span><span class="nm">${t.name}</span>
+      </div>`).join('');
+  }
+  // Toggling state is cheap; rebuilding 32 nodes every 2s is not.
+  for (const el of box.children) el.classList.toggle('on', favs.has(el.dataset.ab));
+  $('sum-favs').textContent = favs.size ? `${favs.size} selected` : 'none — no alerts will fire';
+}
+
+// The roster carries no colours, but any game featuring the team does.
+function colorOf(s, ab) {
+  for (const g of s.games) {
+    if (g.away.abbrev === ab) return g.away.color;
+    if (g.home.abbrev === ab) return g.home.color;
+  }
+  return '#4a5060';
+}
+
+/* ---- bets ------------------------------------------------------------ */
+let betDir = 'over';
+let statCatalog = [];
+let selectedLegs = new Set();
+
+function setDir(d) {
+  betDir = d;
+  $('bf-over').setAttribute('aria-pressed', String(d === 'over'));
+  $('bf-under').setAttribute('aria-pressed', String(d === 'under'));
+  updateGoalHint();
+}
+
+/* The number is the GOAL, inclusive: "over 4" hits on the fourth catch and the
+   bar is full at that moment. The hint says so in words, because a sportsbook
+   has trained everyone to type 3.5 -- which still works, and is rounded up. */
+function updateGoalHint() {
+  const st = statCatalog.find(s => s.key === $('bf-stat').value);
+  const fixed = !!(st && st.fixed_goal != null);
+  $('bf-line').hidden = fixed;
+  // Anytime TD has no direction to choose either -- it's "at least one".
+  $('bf-over').parentElement.hidden = fixed;
+  $('bf-line').placeholder = betDir === 'over'
+    ? 'goal, e.g. 80 (80 or more)' : 'goal, e.g. 1 (1 or fewer)';
+  $('bf-note').textContent = fixed
+    ? `${st.label}: hits on the first touchdown he scores — passing TDs don't count.` : '';
+}
+
+async function loadCatalog(sport) {
+  const r = await fetch(`/api/bets/catalog?sport=${sport}`);
+  statCatalog = (await r.json()).stats || [];
+  fillStatSelect('');
+}
+
+function onGamePicked() {
+  const g = (S.games || []).find(x => x.id === $('bf-game').value && x.sport === S.mode);
+  if (!g) return;
+  $('bf-team').innerHTML = [g.away, g.home].map(t => `<option value="${t.abbrev}">${t.abbrev}</option>`).join('');
+  onTeamPicked();
+}
+
+function fillPlayerSelect(players) {
+  const sel = $('bf-player');
+  if (!players.length) { sel.innerHTML = '<option value="">no roster found — pick the team again</option>'; return; }
+  // Grouped by position, in first-seen order -- the curated list arrives
+  // QB/RB/WR/TE/K/DE; a full roster is whatever order ESPN groups it in.
+  const groups = [], byPos = new Map();
+  for (const p of players) {
+    const pos = p.position || '?';
+    if (!byPos.has(pos)) { byPos.set(pos, []); groups.push(pos); }
+    byPos.get(pos).push(p);
+  }
+  sel.innerHTML = groups.map(pos => `<optgroup label="${pos}">${
+    byPos.get(pos).map(p => `<option value="${p.id}|${p.name}" data-pos="${pos}">${p.name}</option>`).join('')
+  }</optgroup>`).join('');
+  onPlayerPicked();
+}
+
+/* The stat list follows the player. A quarterback has no business being
+   offered "Extra Points Made", and wading past kicking markets to reach
+   passing yards is the whole reason this exists. */
+function onPlayerPicked() {
+  const opt = $('bf-player').selectedOptions[0];
+  const pos = opt ? (opt.dataset.pos || '') : '';
+  fillStatSelect(pos);
+}
+
+const STAT_GROUP_LABEL = {
+  touchdowns: 'Touchdowns',
+  passing: 'Passing', rushing: 'Rushing', receiving: 'Receiving',
+  kicking: 'Kicking', defense: 'Defense', misc: 'Other',
+  batting: 'Batting', pitching: 'Pitching',
+  combined: 'Combined',
+};
+
+function fillStatSelect(position) {
+  const sel = $('bf-stat');
+  const showAll = $('bf-statall').checked;
+  const known = new Set(statCatalog.flatMap(s => s.positions || []));
+  // An unknown position (a long snapper, a new code) falls back to everything.
+  // A picker that silently offers NO stats is a far worse failure than one
+  // offering a few too many.
+  const gate = !showAll && position && known.has(position);
+  const stats = gate
+    ? statCatalog.filter(s => (s.positions || []).includes(position))
+    : statCatalog;
+
+  // Combined markets go LAST: they're the specialised ask, and burying
+  // "Passing Yards" under them would just be a different kind of wading.
+  const order = ['touchdowns','passing','rushing','receiving','batting','pitching',
+                 'kicking','defense','misc','combined'];
+  const groups = new Map();
+  for (const st of stats) {
+    if (!groups.has(st.category)) groups.set(st.category, []);
+    groups.get(st.category).push(st);
+  }
+  const keys = [...groups.keys()].sort((a,b) => order.indexOf(a) - order.indexOf(b));
+
+  const prev = sel.value;
+  sel.innerHTML = keys.map(cat => `<optgroup label="${STAT_GROUP_LABEL[cat] || cat}">${
+    groups.get(cat).map(st => `<option value="${st.key}">${st.label}</option>`).join('')
+  }</optgroup>`).join('');
+  // Keep the current choice if it survived the filter.
+  if (prev && stats.some(st => st.key === prev)) sel.value = prev;
+
+  $('bf-statall-wrap').hidden = !(position && known.has(position));
+  $('bf-stat-note').textContent = gate
+    ? `${stats.length} markets for ${position}` : `all ${stats.length} markets`;
+  updateGoalHint();
+}
+
+/* Each roster request is numbered, and only the LATEST one may fill the
+   list. Switching teams quickly used to let a slow response for the team
+   picked first land last and overwrite the one you'd actually chosen --
+   another way to end up with the wrong roster, or none. */
+let rosterSeq = 0;
+
+async function onTeamPicked() {
+  const team = $('bf-team').value;
+  if (!team) return;
+  const sel = $('bf-player');
+  const showAll = $('bf-showall').checked;
+  const mine = ++rosterSeq;
+  sel.innerHTML = '<option>loading…</option>';
+  try {
+    const r = await fetch(`/api/bets/roster?sport=${S.mode}&team=${encodeURIComponent(team)}&full=${showAll}`);
+    const data = await r.json();
+    if (mine !== rosterSeq) return;   // a newer pick is already in flight
+    fillPlayerSelect(data.players || []);
+    // Only worth offering "show all" where curation actually applies.
+    $('bf-showall-wrap').hidden = showAll ? false : !data.curated;
+  } catch (e) {
+    if (mine !== rosterSeq) return;
+    // A failed fetch is only remembered for 30 seconds now, so trying again
+    // shortly genuinely retries rather than replaying the failure.
+    sel.innerHTML = '<option value="">roster unavailable — pick the team again</option>';
+  }
+}
+
+async function addBet() {
+  const gameId = $('bf-game').value;
+  const playerVal = $('bf-player').value;
+  const goal = parseFloat($('bf-line').value);
+  const note = $('bf-note');
+  const st = statCatalog.find(s => s.key === $('bf-stat').value);
+  const fixed = !!(st && st.fixed_goal != null);
+
+  if (!gameId || !playerVal || (!fixed && isNaN(goal))) {
+    note.textContent = fixed ? 'Pick a game and a player.'
+                             : 'Pick a game, a player, and enter a goal.';
+    return;
+  }
+  const [playerId, playerName] = playerVal.split('|');
+  const r = await fetch('/api/bets', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      sport: S.mode, game_id: gameId, player_id: playerId, player_name: playerName,
+      team: $('bf-team').value, stat: $('bf-stat').value,
+      direction: fixed ? 'over' : betDir, goal: fixed ? null : goal,
+    }),
+  });
+  if (r.ok) {
+    $('bf-line').value = '';
+    note.textContent = '';
+    refresh();
+  } else {
+    note.textContent = 'Could not add that bet: ' + ((await r.json()).detail || r.status);
+  }
+}
+
+const delBet = id => fetch('/api/bets/' + id, {method: 'DELETE'}).then(refresh);
+const clearBets = () => post('/api/bets/clear').then(refresh);
+
+function toggleLeg(id) {
+  selectedLegs.has(id) ? selectedLegs.delete(id) : selectedLegs.add(id);
+  renderBets(S);
+}
+
+async function makeParlay() {
+  if (!selectedLegs.size) return;
+  await fetch('/api/parlays', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: $('pl-name').value || 'Parlay', bet_ids: [...selectedLegs]}),
+  });
+  selectedLegs.clear();
+  $('pl-name').value = '';
+  refresh();
+}
+
+const delParlay = id => fetch('/api/parlays/' + id, {method: 'DELETE'}).then(refresh);
+
+// "58m" / "4m" -- how long a settled bet stays before it's swept.
+function fmtMins(seconds) {
+  const m = Math.max(0, Math.round(seconds / 60));
+  return m >= 1 ? m + 'm' : '<1m';
+}
+
+function betRow(b, inParlay) {
+  const checked = selectedLegs.has(b.id) ? 'checked' : '';
+  const pct = Math.round((b.fraction || 0) * 100);
+  const barColor = b.status === 'hit' ? 'var(--live)'
+                 : b.status === 'busted' ? 'var(--red)'
+                 : b.status === 'live' ? 'var(--amber)' : '#3d434f';
+  return `
+    <div class="bet ${b.status}">
+      ${inParlay ? '<span></span>'
+                 : `<input type="checkbox" ${checked} onchange="toggleLeg('${b.id}')"
+                      title="Select to group into a parlay">`}
+      <div class="who">
+        <div class="line1">
+          <span class="nm">${b.player_name}</span>
+          <span class="st">${b.team} · ${b.goal_text} ${b.stat_label}</span>
+        </div>
+        <div class="barwrap"><div class="bar"><i style="width:${pct}%;background:${barColor}"></i></div></div>
+      </div>
+      <span class="val">${b.display || '—'}</span>
+      ${b.stale
+        ? `<span class="stat" style="color:var(--pin)"
+                 title="That game is no longer on the schedule, so this bet can't move again and doesn't take panel time. Delete it when you're done with it.">off slate</span>`
+        : `<span class="stat ${b.status}" ${b.expires_in != null
+            ? `title="Auto-removes in ${fmtMins(b.expires_in)}"` : ''}>${b.status}${
+              b.expires_in != null ? ` · ${fmtMins(b.expires_in)}` : ''}</span>`}
+      <button class="del" onclick="delBet('${b.id}')" title="Delete">&times;</button>
+    </div>`;
+}
+
+function renderBets(s) {
+  const bets = (s.bets || []).filter(b => b.sport === s.mode);
+  const parlays = s.parlays || [];
+  const grouped = new Set();
+  let html = '';
+
+  for (const p of parlays) {
+    const legs = bets.filter(b => b.parlay_id === p.id);
+    if (!legs.length) continue;
+    legs.forEach(l => grouped.add(l.id));
+    html += `<div class="parlaybox">
+        <div class="parlayhead">
+          <b>${p.name}</b>
+          <span class="stat ${p.status}">${p.status}</span>
+          <span class="mono">${p.hit}/${p.total} legs</span>${
+            p.expires_in != null ? `<span class="mono" title="Auto-removes once settled">clears in ${fmtMins(p.expires_in)}</span>` : ''}
+          <button class="btn tiny" onclick="delParlay('${p.id}')">Ungroup</button>
+        </div>
+        ${legs.map(l => betRow(l, true)).join('')}
+      </div>`;
+  }
+  html += bets.filter(b => !grouped.has(b.id)).map(b => betRow(b, false)).join('');
+
+  $('betlist').innerHTML = html
+    || `<div class="empty">No ${s.mode.toUpperCase()} bets tracked — open “Add a bet” above.</div>`;
+
+  $('bet-count').textContent = bets.length
+    ? `${bets.length} tracked${s.replay_id ? ' · paused' : ''}`
+    : '';
+  $('sum-betform').textContent = s.replay_id ? 'paused while replaying' : 'player props & parlays';
+
+  // Replay is a deliberate pause, not a fault -- but "paused" alone doesn't say
+  // why or where to undo it, so spell it out with a one-click way back to live.
+  const rb = $('replay-banner');
+  rb.hidden = !s.replay_id;
+  if (s.replay_id) {
+    const rec = (s.recordings || []).find(r => r.id === s.replay_id);
+    rb.innerHTML = `Bet tracking is paused because the NFL source is set to a `
+      + `<b>recording</b>${rec ? ` (${rec.short_name})` : ''}. A recording only carries the `
+      + `final box score, so every prop would settle instantly and wrongly. `
+      + `<button class="btn tiny" onclick="post('/api/replay/live').then(refresh)">Switch to live feed</button>`;
+  }
+
+  $('parlaybar').hidden = !selectedLegs.size;
+  $('pl-count').textContent = selectedLegs.size;
+
+  // Only the FOCUSED sport's games. With several sports on the panel, s.games
+  // holds all of them -- and a bet carries the focused sport, so offering an
+  // NFL game while the form is in MLB mode would build a bet whose sport and
+  // game disagree. It also kept the roster stale: the old game was still in
+  // the list after a sport switch, so the form never reloaded below it.
+  const gameSel = $('bf-game');
+  const own = s.games.filter(g => g.sport === s.mode);
+  const key = s.mode + '|' + own.map(g => g.id).join(',');
+  if (gameSel.dataset.key !== key) {
+    gameSel.dataset.key = key;
+    const prev = gameSel.value;
+    gameSel.innerHTML = own.map(g =>
+      `<option value="${g.id}">${g.away.abbrev} @ ${g.home.abbrev}</option>`).join('');
+    if (own.some(g => g.id === prev)) gameSel.value = prev; else onGamePicked();
+  }
+  if (statCatalog.length === 0 || $('bf-stat').dataset.sport !== s.mode) {
+    $('bf-stat').dataset.sport = s.mode;
+    loadCatalog(s.mode);
+  }
+
+  if (s.replay_id) {
+    $('bf-note').textContent = 'Bet tracking is paused during replay — a recording only carries '
+      + 'the final box score, so props would settle instantly and wrongly.';
+  } else if (!own.length) {
+    // An empty game list is otherwise indistinguishable from a broken form.
+    $('bf-note').textContent = (s.active_sports || []).includes(s.mode)
+      ? `No ${s.mode.toUpperCase()} games on the schedule right now.`
+      : `${s.mode.toUpperCase()} isn't on the panel, so its games aren't being `
+        + `loaded — switch it on under Main → On air to bet on them.`;
+  }
+}
+
+/* ---- replay ---------------------------------------------------------- */
+function renderReplay(s) {
+  $('replay-sec').hidden = s.mode !== 'nfl';
+  if (s.mode !== 'nfl') return;
+
+  const sel = $('rec');
+  // Rebuild only when the option set changes, or the 2s refresh would close
+  // the dropdown while it's open.
+  const want = 'live|' + s.recordings.map(r => r.id).join('|');
+  if (sel.dataset.key !== want) {
+    sel.dataset.key = want;
+    sel.innerHTML = `<option value="live">Live ESPN feed</option>` + s.recordings.map(r =>
+      `<option value="${r.id}">Replay — ${r.short_name} (${r.final_score || ''})</option>`).join('');
+  }
+  sel.value = s.replay_id || 'live';
+
+  const on = !!s.replay_id;
+  $('sp').hidden = $('speed-wrap').hidden = !on;
+  if (on) syncSlider('sp', s.replay_speed);
+
+  const rec = s.recordings.find(r => r.id === s.replay_id);
+  $('sum-source').textContent = on ? (rec ? rec.short_name : 'replay') + ` · ${s.replay_speed}×` : 'Live ESPN feed';
+
+  const g = s.games[0];
+  if (on && g) {
+    const m = /REPLAY (\d+)s\/(\d+)s/.exec(g.status_detail || '');
+    const pct = m ? Math.min(100, 100 * m[1] / m[2]) : (g.state === 'final' ? 100 : 0);
+    $('replay-note').innerHTML =
+      `<b>${g.away.abbrev} ${g.away.score}–${g.home.score} ${g.home.abbrev}</b> · ${g.period} ${g.detail.clock || ''}`
+      + (g.detail.last_play ? `<br>${g.detail.last_play.slice(0, 110)}` : '')
+      + `<div class="bar" style="margin-top:9px"><i style="width:${pct}%"></i></div>`;
+  } else {
+    $('replay-note').textContent = on ? 'loading recording…'
+      : 'Live feed. Pick a recording to drive the panel with a real game.';
+  }
+}
+
+/* ---- on air ---------------------------------------------------------- */
+function renderOnAir(s) {
+  const box = $('onair'), tag = $('onair-tag'), line = $('onair-line'), sub = $('onair-sub');
+  box.classList.toggle('alerting', !!s.alert);
+
+  if (s.alert) {
+    const a = s.alert;
+    tag.textContent = 'Alert';
+    const who = a.scorer ? `${a.scorer}${a.how ? ' · ' + a.how : ''}` : '';
+    line.textContent = [a.label, a.team && a.points != null ? `${a.team} +${a.points}` : '', who]
+      .filter(Boolean).join('  ');
+    sub.textContent = [
+      a.description || '',
+      `${a.remaining}s left`,
+      a.pending ? `${a.pending} queued` : '',
+    ].filter(Boolean).join(' · ');
+    return;
+  }
+
+  tag.textContent = 'On Air';
+  // Lifestyle screens have no game id to look up, so they're named from the
+  // rotation key instead -- otherwise this block just reads "—" for the whole
+  // mode and looks like nothing is running.
+  if (s.lifestyle_mode) {
+    const key = s.now_screen || '';
+    const face = key.startsWith('face:')
+      && (s.faces || []).find(f => f.id === key.slice(5));
+    const cd = key.startsWith('countdown:')
+      && (s.countdowns || []).find(c => c.id === key.slice(10));
+    const LS_LABEL = {clock: 'Clock', weather: 'Weather', message: 'Message'};
+    line.textContent = face ? `Face · ${face.name}`
+      : cd ? `Countdown · ${cd.label || 'Countdown'}`
+      : LS_LABEL[key] || 'Lifestyle';
+    sub.textContent = key
+      ? 'lifestyle mode' + (s.lifestyle_alerts ? ' · favourite scores still break in' : ' · sports muted')
+      : 'nothing switched on yet';
+    return;
+  }
+
+  const g = s.games.find(x => x.id === s.now_showing);
+  if (g) {
+    const pre = g.state === 'pre';
+    line.textContent = pre
+      ? `${g.away.abbrev} @ ${g.home.abbrev}`
+      : `${g.away.abbrev} ${g.away.score}   ${g.home.abbrev} ${g.home.score}`;
+    const bits = pre
+      ? [fmtWhen(g.start_utc)]
+      : [g.period || g.status_detail, g.detail && g.detail.clock];
+    if (s.pinned_id === g.id) bits.push('pinned');
+    sub.textContent = bits.filter(Boolean).join('  ·  ');
+  } else if ((s.bets || []).some(b => b.sport === s.mode)) {
+    line.textContent = 'Bet tracker';
+    sub.textContent = 'showing prop progress';
+  } else {
+    line.textContent = s.counts.total ? 'Rotating…' : '—';
+    sub.textContent = s.last_error ? s.last_error : '';
+  }
+}
+
+
+/* ---- tabs ------------------------------------------------------------
+   The fantasy roster is set-and-forget and the bet list is per-slate, so
+   they get their own tabs rather than making the Panel view scroll past
+   them during a game. Remembered per browser.                          */
+const TABS = ['main', 'panel', 'lifestyle', 'bets', 'fantasy', 'setup'];
+const TAB_KEY = 'sportsbug.tab';
+let currentTab = 'main';
+
+function setTab(name) {
+  if (!TABS.includes(name)) name = 'main';
+  currentTab = name;
+  for (const t of TABS) {
+    $('tab-' + t).hidden = t !== name;
+    $('tb-' + t).setAttribute('aria-selected', String(t === name));
+  }
+  try { localStorage.setItem(TAB_KEY, name); } catch (e) {}
+}
+(function () {
+  let t = 'main';
+  try { t = localStorage.getItem(TAB_KEY) || 'main'; } catch (e) {}
+  setTab(t);
+})();
+
+/* ---- fantasy --------------------------------------------------------- */
+const FANTASY_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+// Fantasy slot -> the ESPN roster position codes that fill it.
+const ROSTER_CODES = {
+  QB: ['QB'],
+  RB: ['RB', 'FB'],
+  WR: ['WR'],
+  TE: ['TE'],
+  K:  ['PK', 'K'],      // ESPN says PK for a place kicker
+  DEF: [],              // handled separately -- a team, not a player
+};
+const STYLE_EXAMPLES = {
+  touchdown: 'any TD — run, catch, pass, return',
+  big_play:  'any gain of 25+ yards — pass, catch or run',
+  touch:     'RB/WR/TE catch or run',
+  kicking:   'field goals & extra points',
+  defense:   'turnovers forced & defensive scores',
+};
+
+const addFantasyTeam = () => {
+  const name = $('ft-name').value.trim();
+  if (!name) return;
+  postJSON('/api/fantasy/teams', {name}).then(() => { $('ft-name').value = ''; refresh(); });
+};
+// Two-click confirm rather than a native dialog: confirm() blocks the poll
+// loop and was being suppressed in some browsers, so the delete never fired.
+let pendingDelete = null;
+function delFantasyTeam(id, btn) {
+  if (pendingDelete !== id) {
+    pendingDelete = id;
+    if (btn) { btn.textContent = 'Confirm?'; btn.classList.add('warn'); }
+    setTimeout(() => {
+      if (pendingDelete === id) { pendingDelete = null; renderFantasy(S); }
+    }, 4000);
+    return;
+  }
+  pendingDelete = null;
+  fetch('/api/fantasy/teams/' + id, {method: 'DELETE'}).then(refresh);
+}
+const delFantasyPlayer = id => fetch('/api/fantasy/players/' + id, {method: 'DELETE'}).then(refresh);
+const toggleStarting = id => postJSON(`/api/fantasy/players/${id}/starting`).then(refresh);
+
+function postJSON(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: body ? {'Content-Type': 'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+// Roster lookup for the add-player row, cached per team+position.
+async function fantasyPlayers(teamId) {
+  const nfl = $('fp-team-' + teamId).value;
+  const pos = $('fp-pos-' + teamId).value;
+  const sel = $('fp-player-' + teamId);
+  if (pos === 'DEF') {
+    sel.innerHTML = `<option value="DEF:${nfl}|${nfl} D/ST">${nfl} D/ST</option>`;
+    return;
+  }
+  sel.innerHTML = '<option>loading…</option>';
+  try {
+    const r = await fetch(`/api/bets/roster?sport=nfl&team=${encodeURIComponent(nfl)}&full=true`);
+    const players = (await r.json()).players || [];
+    // ESPN's roster uses its own position codes -- a kicker is "PK", not "K" --
+    // so a plain equality check found nothing and silently fell back to the
+    // whole 90-man roster. Map each fantasy slot to the codes it can match.
+    const codes = ROSTER_CODES[pos] || [pos];
+    const matching = players.filter(p => codes.includes(p.position));
+    // Only fall back to everyone if the position genuinely isn't on the roster,
+    // and say so rather than pretending the list is filtered.
+    const list = matching.length ? matching : players;
+    if (!matching.length) {
+      sel.innerHTML = `<option value="" disabled>no ${pos} on this roster — showing all</option>`;
+    } else {
+      sel.innerHTML = '';
+    }
+    sel.innerHTML += list.map(p =>
+      `<option value="${p.id}|${p.name}">${p.name}${p.position ? ' · ' + p.position : ''}</option>`).join('')
+      || '<option value="">no players found</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">roster unavailable</option>';
+  }
+}
+
+async function addFantasyPlayer(teamId) {
+  const val = $('fp-player-' + teamId).value;
+  if (!val) return;
+  const [athleteId, name] = val.split('|');
+  const r = await postJSON('/api/fantasy/players', {
+    team_id: teamId, athlete_id: athleteId, name,
+    position: $('fp-pos-' + teamId).value, team: $('fp-team-' + teamId).value,
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    alert(d.detail || 'Could not add that player.');
+    return;
+  }
+  refresh();
+}
+
+function renderFantasy(s) {
+  const f = s.fantasy || {teams: [], tracked: 0};
+  $('fantasy-count').textContent = f.teams.length
+    ? `${f.teams.length} team${f.teams.length > 1 ? 's' : ''} · ${f.tracked} starter${f.tracked === 1 ? '' : 's'} tracked`
+    : '';
+  $('tb-fantasy').innerHTML = 'Fantasy' + (f.tracked ? '<span class="dot"></span>' : '');
+
+  const teamOpts = (s.roster || []).map(t => `<option value="${t.abbrev}">${t.abbrev}</option>`).join('');
+
+  // Rebuilding this every 2s destroyed the add-player <select>s mid-use --
+  // the NFL-team dropdown snapped back to its first option (ARI) constantly.
+  // Only rebuild when the roster genuinely changes, and restore the picker
+  // choices afterwards so an in-progress selection survives.
+  const box = $('fantasy-teams');
+  const fkey = JSON.stringify(f.teams.map(t => [t.id, t.name, t.starters, t.total,
+    t.groups.map(g => [g.position, g.players.map(p => [p.id, p.starting])])]));
+  if (box.dataset.key === fkey) { renderStyleRows(s); return; }
+  const keep = {};
+  for (const el of box.querySelectorAll('select')) if (el.value) keep[el.id] = el.value;
+  box.dataset.key = fkey;
+
+  box.innerHTML = f.teams.length ? f.teams.map(t => `
+    <div class="fteam">
+      <div class="fteam-head">
+        <span class="fteam-name">${t.name}</span>
+        <span class="fteam-count">${t.starters}/${t.total} starting</span>
+        <span style="flex:1"></span>
+        <button class="btn tiny" onclick="delFantasyTeam('${t.id}', this)">Delete team</button>
+      </div>
+      <div class="fteam-body">
+        ${t.groups.map(g => `
+          <div class="posgroup">
+            <div class="poslabel">${g.position}</div>
+            ${g.players.map(p => `
+              <div class="fplayer ${p.starting ? '' : 'bench'}">
+                <label class="sw-toggle" title="${p.starting ? 'Starting — tracked' : 'Benched — not tracked'}">
+                  <input type="checkbox" ${p.starting ? 'checked' : ''} onchange="toggleStarting('${p.id}')">
+                  <span class="sw-track"></span>
+                </label>
+                <span class="pname">${p.name}</span>
+                <span class="pteam">${p.team || ''}</span>
+                <button class="del" onclick="delFantasyPlayer('${p.id}')" title="Remove">&times;</button>
+              </div>`).join('')}
+          </div>`).join('') || '<div class="note">No players yet — add some below.</div>'}
+
+        <div class="addrow">
+          <select id="fp-team-${t.id}" onchange="fantasyPlayers('${t.id}')" aria-label="NFL team">${teamOpts}</select>
+          <select id="fp-pos-${t.id}" onchange="fantasyPlayers('${t.id}')" aria-label="Position">
+            ${FANTASY_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}
+          </select>
+          <select id="fp-player-${t.id}" aria-label="Player"></select>
+          <button class="btn" onclick="addFantasyPlayer('${t.id}')">Add player</button>
+        </div>
+      </div>
+    </div>`).join('')
+    : '<div class="empty">No fantasy teams yet — add one above.</div>';
+
+  // Restore picker choices, then load the matching player list.
+  for (const [id, val] of Object.entries(keep)) {
+    const el = $(id);
+    if (el && [...el.options].some(o => o.value === val)) el.value = val;
+  }
+  for (const t of f.teams) {
+    const sel = $('fp-player-' + t.id);
+    if (sel && (!sel.options.length || keep['fp-player-' + t.id] === undefined)) {
+      fantasyPlayers(t.id);
+    }
+  }
+
+  renderStyleRows(s);
+}
+
+function renderStyleRows(s) {
+  drawStyleRows('style-rows', s.fantasy_categories, s.fantasy_styles,
+                s.fantasy_durations, s.duration_range, 'fantasy', STYLE_EXAMPLES);
+  drawStyleRows('bet-style-rows', s.bet_categories, s.bet_styles,
+                s.bet_durations, s.duration_range, 'bet', BET_EXAMPLES);
+}
+
+/* One control per alert category: a panel mock, a style dropdown, and how long
+   it stays up. Shared by the fantasy and bet tabs so both behave identically. */
+function drawStyleRows(elId, categories, styles, durations, range, kind, examples) {
+  const box = $(elId);
+  if (!box || !categories) return;
+  const [lo, hi] = range || [3, 20];
+
+  box.innerHTML = categories.map(c => {
+    const cur = (styles || {})[c.key] || 'full';
+    const secs = (durations || {})[c.key] ?? 6;
+    return `
+      <div class="styrow">
+        <div>
+          <div class="cat">${c.label}</div>
+          <div class="eg">${(examples || {})[c.key] || ''}</div>
+        </div>
+        <div class="mock ${cur}" title="How this looks on the panel">
+          <span class="ghost"></span><span class="ghost"></span><i></i>
+        </div>
+        <label class="dur" title="How long it stays on screen">
+          <span class="lab" id="${kind}-dl-${c.key}">${secs}s</span>
+          <input type="range" min="${lo}" max="${hi}" step="0.5" value="${secs}"
+                 ${cur === 'off' ? 'disabled' : ''}
+                 oninput="document.getElementById('${kind}-dl-${c.key}').textContent = this.value + 's'"
+                 onchange="setDuration('${kind}', '${c.key}', +this.value)"
+                 aria-label="${c.label} duration">
+        </label>
+        <select onchange="setStyle('${kind}', '${c.key}', this.value)" aria-label="${c.label} alert style">
+          <option value="full"   ${cur === 'full'   ? 'selected' : ''}>Full screen</option>
+          <option value="banner" ${cur === 'banner' ? 'selected' : ''}>Bottom bar</option>
+          <option value="off"    ${cur === 'off'    ? 'selected' : ''}>Off</option>
+        </select>
+      </div>`;
+  }).join('');
+}
+
+const PREF_URL  = {fantasy: '/api/fantasy/styles', bet: '/api/bets/styles'};
+const PREVIEW_URL = {fantasy: '/api/fantasy/test', bet: '/api/bets/alert-test'};
+
+function setStyle(kind, category, style) {
+  postJSON(PREF_URL[kind], {styles: {[category]: style}})
+    .then(refresh)
+    .then(() => { if (style !== 'off') postJSON(`${PREVIEW_URL[kind]}?category=${category}`); });
+}
+
+function setDuration(kind, category, seconds) {
+  postJSON(PREF_URL[kind], {durations: {[category]: seconds}}).then(refresh);
+}
+
+const BET_EXAMPLES = {
+  parlay_hit: 'every leg in — the payoff',
+  bet_hit:    'a straight bet lands',
+  leg_hit:    'one leg of a parlay lands',
+  bet_progress: 'the number moved, nothing decided yet',
+};
+
+/* Whole-parlay-after-a-leg-alert. Only meaningful when a single-leg alert is
+   actually taking the screen, so the whole control hides otherwise rather than
+   sitting there doing nothing. */
+function renderParlayContext(s) {
+  const styles = s.bet_styles || {};
+  const eligible = ['leg_hit', 'bet_progress'].filter(k => styles[k] === 'full');
+  const box = $('parlay-context-box');
+  box.hidden = eligible.length === 0;
+  if (box.hidden) return;
+
+  $('plctx').checked = !!s.parlay_context;
+  $('betrot').checked = s.bets_in_rotation !== false;
+  $('plctx-timing').hidden = !s.parlay_context;
+
+  const per = s.parlay_legs_per_page || 4;
+  const names = { leg_hit: 'Parlay leg hits', bet_progress: 'Progress made' };
+  $('sum-plctx').textContent = s.parlay_context
+    ? `on · ${s.parlay_page_seconds}s a screen` : 'off';
+
+  // Only real parlays page. Say so when there aren't any, rather than letting
+  // the preview look broken.
+  const real = (s.parlays || []).filter(p => (p.total || 0) > 1);
+  const note = $('plctx-note');
+  if (!real.length) {
+    note.textContent =
+      'Nothing to page through yet — this needs a parlay with more than one leg. '
+      + 'Tick two or more bets above and group them into a parlay, and the ticket '
+      + 'will follow the leg alert.';
+    note.style.color = 'var(--pin)';
+  } else {
+    const biggest = Math.max(...real.map(p => p.total));
+    const pages = Math.ceil(biggest / per);
+    note.textContent =
+      `${per} legs a screen. Your biggest ticket has ${biggest} `
+      + `leg${biggest === 1 ? '' : 's'} — ${pages} screen${pages === 1 ? '' : 's'}, so the `
+      + `alert stays up ${(pages * s.parlay_page_seconds).toFixed(0)}s longer than the leg `
+      + `alert itself. Applies to: ${eligible.map(k => names[k]).join(' and ')}.`;
+    note.style.color = '';
+  }
+}
+
+function setLogo(sport, on) {
+  const next = Object.assign({}, S.show_logos || {}, {[sport]: !!on});
+  save({show_logos: next});
+}
+
+function renderLogoToggles(s) {
+  const on = s.show_logos || {}, counts = s.logo_counts || {};
+  const box = $('logo-toggles');
+  const key = JSON.stringify([on, counts]);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = (s.sports || []).map(sp => `
+      <label class="check" title="${counts[sp] || 0} logos installed">
+        <input type="checkbox" ${on[sp] ? 'checked' : ''}
+               ${counts[sp] ? '' : 'disabled'}
+               onchange="setLogo('${sp}', this.checked)">
+        ${sp.toUpperCase()}${counts[sp] ? '' : ' (none installed)'}
+      </label>`).join('');
+  }
+  const live = (s.sports || []).filter(sp => on[sp]);
+  $('logo-sum').textContent = live.length ? live.map(x => x.toUpperCase()).join(' ') : 'off';
+}
+
+/* ---- main render ----------------------------------------------------- */
+/* ---- lifestyle -------------------------------------------------------
+   Every "thing you create" here (a countdown, a face) becomes its own
+   screen in the lifestyle rotation, the same way a bet or a parlay already
+   works -- see AppState.lifestyle_screens() on the server. */
+const setLifestyleMode = on =>
+  save({lifestyle_mode: !!on}).then(() => { if (on) setTab('lifestyle'); });
+
+const CLOCK_ART = {
+  segment: `<i class="b amber" style="left:10px;top:16px;width:14px;height:26px"></i>
+            <i class="b amber" style="left:30px;top:16px;width:14px;height:26px"></i>
+            <i class="b" style="left:52px;top:16px;width:14px;height:26px"></i>
+            <i class="b" style="left:72px;top:16px;width:14px;height:26px"></i>`,
+  digital: `<i class="b amber" style="left:20px;top:16px;right:20px;height:16px"></i>
+            <i class="b" style="left:34px;top:38px;right:34px;height:8px"></i>`,
+  analog: `<i class="b" style="left:29px;top:5px;width:48px;height:48px;border-radius:50%;
+                background:transparent;border:2px solid #4a5060"></i>
+           <i class="b amber" style="left:52px;top:20px;width:2px;height:20px"></i>`,
+  minimal: `<i class="b" style="left:34px;top:26px;right:34px;height:6px"></i>`,
+};
+const setClockStyle = k => save({clock_style: k});
+function renderClockPicker(s) {
+  const styles = s.clock_styles || [];
+  const box = $('clock-picker');
+  const key = JSON.stringify([styles, s.clock_style]);
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = styles.map(st => `
+    <button class="look ${st.key === s.clock_style ? 'on' : ''}" type="button"
+            aria-pressed="${st.key === s.clock_style}" onclick="setClockStyle('${st.key}')">
+      <span class="thumb">${CLOCK_ART[st.key] || ''}</span>
+      <span class="nm">${st.label}</span>
+    </button>`).join('');
+}
+
+/* ---- wi-fi -----------------------------------------------------------
+   Reachable two ways: over the panel's own setup hotspot when it has no
+   network, and over the real network afterwards to move it to another one.
+   Kept in the Setup tab either way so there's one place to look.        */
+let wifiNets = null;       // null until scanned, so "none found" can differ
+let wifiTarget = null;
+let wifiBusy = false;
+let wifiSaved = [];
+
+/* Network names are text broadcast by anyone in range, so they go into the
+   page ESCAPED, and every button refers to its network by POSITION rather
+   than by name. The name used to be JSON-quoted straight into a
+   double-quoted onclick attribute -- which ended the attribute at the first
+   quote. The browser saw onclick="pickWifi(" and tapping Join did nothing at
+   all, on every network, since the page was written. */
+function escHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+}
+const pickWifiAt = i => { const n = (wifiNets || [])[i]; if (n) pickWifi(n.ssid, n.secured); };
+const forgetWifiAt = i => { const ssid = wifiSaved[i]; if (ssid != null) forgetWifi(ssid); };
+
+async function scanWifi() {
+  const btn = $('wifi-scan-btn');
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  try {
+    const r = await fetch('/api/wifi/scan');
+    wifiNets = r.ok ? (await r.json()).networks : [];
+  } catch (e) {
+    wifiNets = [];
+  }
+  btn.disabled = false;
+  btn.textContent = 'Scan for networks';
+  renderWifi(S);
+}
+
+function pickWifi(ssid, secured) {
+  wifiTarget = ssid;
+  $('wifi-target').textContent = ssid;
+  $('wifi-join').hidden = false;
+  $('wifi-join-note').textContent = '';
+  $('wifi-pass').value = '';
+  $('wifi-pass').hidden = !secured;
+  // Scroll it into view. The panel appears BELOW the network list, and on a
+  // phone with a dozen networks that is off-screen -- tapping Join looked
+  // like it did nothing at all.
+  $('wifi-join').scrollIntoView({behavior: 'smooth', block: 'center'});
+  if (secured) $('wifi-pass').focus();
+}
+function cancelJoin() { wifiTarget = null; $('wifi-join').hidden = true; }
+
+async function joinWifi() {
+  const note = $('wifi-join-note');
+  // Never return silently. Both of these were dead ends with no feedback --
+  // and "nothing happened" is the single least debuggable outcome there is.
+  if (!wifiTarget) { note.textContent = 'Pick a network first.'; return; }
+  if (wifiBusy)    { note.textContent = 'Still working on the last attempt…'; return; }
+  wifiBusy = true;
+  // Joining drops the hotspot, so a phone connected over it loses this page
+  // mid-request. Say that up front or it looks like a crash.
+  note.textContent = 'Joining… if you are on the SPORTSBUG hotspot you will be '
+    + 'disconnected now. Rejoin your normal Wi-Fi and open sportsbug.local:8080.';
+  try {
+    const r = await fetch('/api/wifi/connect', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ssid: wifiTarget, password: $('wifi-pass').value || null}),
+    });
+    if (r.ok) {
+      const body = await r.json().catch(() => ({}));
+      // The join runs on the panel AFTER this response -- it can't report
+      // success here, because succeeding is exactly what kills this
+      // connection. Say what will happen instead of claiming it's done.
+      note.textContent = (body.detail || 'Joining…')
+        + ' Rejoin your normal Wi-Fi, then open sportsbug.local:8080. '
+        + "If it can't join, the SPORTSBUG hotspot comes back within about a minute "
+        + 'and a half, and the panel shows why.';
+    } else {
+      note.textContent = ((await r.json().catch(() => ({}))).detail) || 'Could not join.';
+    }
+  } catch (e) {
+    // The request dying IS the expected case over the hotspot -- the radio
+    // switches networks mid-flight. Not an error worth alarming anyone with.
+    note.textContent = 'Connection dropped while switching networks — that is '
+      + 'normal. Rejoin your Wi-Fi and open sportsbug.local:8080.';
+  } finally {
+    // In a finally, not after the try: an exception used to leave this stuck
+    // true, and every later tap on Join was then ignored in silence.
+    wifiBusy = false;
+  }
+}
+
+const forgetWifi = ssid =>
+  postJSON('/api/wifi/forget/' + encodeURIComponent(ssid)).then(refresh);
+
+function renderWifi(s) {
+  const net = s.network || {};
+  const box = $('wifi-section');
+  // Off a Pi there's nothing to control; hide it rather than show dead buttons.
+  box.hidden = !net.supported;
+  if (!net.supported) return;
+
+  $('wifi-state').textContent = net.joining ? 'joining…' : net.hotspot ? 'setup mode'
+    : net.online ? (net.ssid || 'connected') : 'not connected';
+  // The outcome of the last join, first. Whoever pressed Join was kicked off
+  // the hotspot while it ran, so this is the first thing they need on return.
+  const lj = net.last_join;
+  const outcome = net.joining ? 'Joining now — this can take up to a minute and a half. '
+    : lj && !lj.ok ? `⚠ Last attempt didn't work: ${lj.detail} `
+    : lj && lj.ok ? `✓ ${lj.detail} ` : '';
+  $('wifi-note').textContent = outcome + (net.hotspot
+    ? 'The panel is running its own hotspot because it could not join a network. '
+      + 'Pick yours below — you will be disconnected while it switches over.'
+    : net.online
+      ? `Connected to ${net.ssid} at ${net.ip}. Reachable at sportsbug.local:8080 `
+        + 'on this network.'
+      : 'Not connected. If it stays this way the panel raises its own hotspot '
+        + 'so you can set it up from a phone.');
+
+  const rows = (wifiNets || []).map((n, i) => `
+    <div class="lscard">
+      <div class="who">
+        <span class="nm">${escHtml(n.ssid)}</span>
+        <span class="st">${n.secured ? 'secured' : 'open'} · ${n.signal}%</span>
+      </div>
+      <button class="btn tiny" onclick="pickWifiAt(${i})">Join</button>
+    </div>`).join('');
+  wifiSaved = s.network.known || [];
+  const saved = wifiSaved.map((ssid, i) => `
+    <div class="lscard">
+      <div class="who"><span class="nm">${escHtml(ssid)}</span><span class="st">saved</span></div>
+      <button class="del" onclick="forgetWifiAt(${i})" title="Forget">&times;</button>
+    </div>`).join('');
+
+  $('wifi-list').innerHTML = (rows || (wifiNets === null
+      ? '<div class="empty">Tap “Scan for networks”.</div>'
+      : '<div class="empty">No networks found — try again.</div>')) + saved;
+}
+
+/* ---- per-screen colour and size -------------------------------------
+   One block per lifestyle screen: a swatch row for MAIN, one for ACCENT,
+   and a size slider. Swatches cover the common cases in a tap; the wheel
+   beside them is a native colour input for anything else.              */
+function setThemeColor(screen, role, hex) {
+  const cur = JSON.parse(JSON.stringify(S.lifestyle_colors || {}));
+  cur[screen] = Object.assign({}, cur[screen], {[role]: hex});
+  save({lifestyle_colors: {[screen]: cur[screen]}});
+}
+function setThemeScale(screen, value) {
+  $(`scale-val-${screen}`).textContent = value + '%';
+  clearTimeout(setThemeScale._t);
+  // Debounced: a slider drag fires continuously, and each save is a POST
+  // that re-renders the whole page.
+  setThemeScale._t = setTimeout(() => save({lifestyle_scale: {[screen]: +value}}), 180);
+}
+
+function swatchRow(screen, role, current, presets) {
+  const chosen = (current || '').toUpperCase();
+  const known = presets.some(p => p.hex.toUpperCase() === chosen);
+  return `
+    <div class="themerow">
+      <span class="lbl">${role === 'main' ? 'Main' : 'Accent'}</span>
+      <div class="swatches">
+        ${presets.map(p => `
+          <button class="sw" style="background:${p.hex}" title="${p.name}"
+                  aria-pressed="${p.hex.toUpperCase() === chosen}"
+                  onclick="setThemeColor('${screen}','${role}','${p.hex}')"></button>`).join('')}
+        <span class="sw wheel" title="Custom colour" aria-pressed="${!known}">
+          <input type="color" value="${current || '#FFFFFF'}"
+                 onchange="setThemeColor('${screen}','${role}',this.value.toUpperCase())">
+        </span>
+        <span class="mono" style="font-size:11px;color:var(--dim)">${chosen}</span>
+      </div>
+    </div>`;
+}
+
+function renderTheme(s, screen) {
+  const host = $('theme-' + screen);
+  if (!host) return;
+  const colors = (s.lifestyle_colors || {})[screen] || {};
+  const scale = (s.lifestyle_scale || {})[screen] ?? 100;
+  const [lo, hi] = s.scale_range || [40, 100];
+  const presets = s.color_presets || [];
+  const key = JSON.stringify([colors, scale, presets, lo, hi]);
+  // Don't rebuild under the user's finger -- the slider especially.
+  if (host.dataset.key === key) return;
+  host.dataset.key = key;
+  host.innerHTML = `
+    <div class="themebox">
+      ${swatchRow(screen, 'main', colors.main, presets)}
+      ${swatchRow(screen, 'accent', colors.accent, presets)}
+      <div class="field-row" style="margin:12px 0 6px">
+        <span>Size on the panel</span>
+        <span class="val" id="scale-val-${screen}">${scale}%</span>
+      </div>
+      <input type="range" min="${lo}" max="${hi}" step="5" value="${scale}"
+             aria-label="Size on the panel"
+             oninput="setThemeScale('${screen}', this.value)">
+    </div>`;
+}
+
+let wxError = null;
+async function setWeatherLocation() {
+  const loc = $('wx-loc').value.trim();
+  if (!loc) return;
+  const r = await fetch('/api/weather/location', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({location: loc}),
+  });
+  if (r.ok) { wxError = null; refresh(); }
+  else {
+    wxError = "Couldn't find that place — try a nearby city, or add a state or country.";
+    renderLifestyle(S);
+  }
+}
+const setWeatherUnits = u => save({weather_units: u});
+
+async function addCountdown() {
+  const label = $('cd-label').value.trim();
+  const val = $('cd-target').value;
+  const note = $('cd-note');
+  if (!val) { note.textContent = 'Pick a date and time.'; return; }
+  const iso = new Date(val).toISOString();
+  const r = await fetch('/api/countdowns', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({label, target_iso: iso}),
+  });
+  if (r.ok) {
+    $('cd-label').value = ''; $('cd-target').value = '';
+    // Added either way -- a past date is usually a wrong year or AM/PM, and
+    // silently accepting one that never shows a number is worse than saying so.
+    note.textContent = new Date(val) < new Date()
+      ? 'Added, but that time has already passed — it shows TODAY, then drops off '
+        + 'the panel a day later. Check the year and AM/PM if that was a slip.'
+      : '';
+    refresh();
+  } else {
+    note.textContent = 'Could not add that countdown.';
+  }
+}
+const delCountdown = id => fetch('/api/countdowns/' + id, {method: 'DELETE'}).then(refresh);
+
+// "23d 4h" -- the list view's own read of remaining_seconds, so it ticks
+// down between polls instead of just at the 2s refresh cadence.
+function fmtCountdown(s) {
+  if (s == null) return '';
+  if (s <= 0) return 'today';
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  return d ? `${d}d ${h}h` : `${h}h`;
+}
+function countdownRow(cd) {
+  return `
+    <div class="lscard">
+      <div class="who">
+        <span class="nm">${cd.label || 'Countdown'}</span>
+        <span class="st">${cd.stale ? 'passed' : fmtCountdown(cd.remaining_seconds)}</span>
+      </div>
+      ${cd.stale ? `<span class="stat" style="color:var(--pin)"
+        title="More than a day past -- off the panel until you remove it">passed</span>` : ''}
+      <button class="del" onclick="delCountdown('${cd.id}')" title="Delete">&times;</button>
+    </div>`;
+}
+function renderCountdowns(s) {
+  const cds = s.countdowns || [];
+  $('cdlist').innerHTML = cds.map(countdownRow).join('')
+    || '<div class="empty">No countdowns yet.</div>';
+  $('cd-count').textContent = cds.length || '';
+}
+
+// The "new face" form's own state -- not persisted until Save is clicked.
+let newFaceLayout = 'solo';
+let newFaceSlots = [{kind: 'time'}];
+
+const FACE_ART = {
+  solo: `<i class="b amber" style="left:6px;top:6px;right:6px;bottom:6px"></i>`,
+  big_strip: `<i class="b amber" style="left:6px;top:6px;right:6px;height:32px"></i>
+              <i class="b" style="left:6px;bottom:6px;right:6px;height:16px"></i>`,
+  halves: `<i class="b amber" style="left:6px;top:6px;right:6px;height:22px"></i>
+           <i class="b" style="left:6px;bottom:6px;right:6px;height:22px"></i>`,
+  quad: `<i class="b amber" style="left:6px;top:6px;width:48px;height:22px"></i>
+         <i class="b" style="right:6px;top:6px;width:48px;height:22px"></i>
+         <i class="b" style="left:6px;bottom:6px;width:48px;height:22px"></i>
+         <i class="b amber" style="right:6px;bottom:6px;width:48px;height:22px"></i>`,
+};
+
+function setFaceLayout(key) {
+  newFaceLayout = key;
+  const found = (S.face_layouts || []).find(l => l.key === key);
+  const n = found ? found.slots : 1;
+  newFaceSlots = Array.from({length: n}, (_, i) => newFaceSlots[i] || {kind: 'time'});
+  renderFaceLayoutPicker(S);
+  renderFaceSlotPicker(S);
+}
+function setFaceSlotKind(i, kind) {
+  newFaceSlots[i] = {kind, countdown_id: (newFaceSlots[i] || {}).countdown_id || null};
+  renderFaceSlotPicker(S);
+}
+function setFaceSlotCountdown(i, id) {
+  newFaceSlots[i] = Object.assign({}, newFaceSlots[i], {countdown_id: id});
+}
+
+function renderFaceLayoutPicker(s) {
+  const layouts = s.face_layouts || [];
+  const box = $('face-layout-picker');
+  const key = JSON.stringify([layouts, newFaceLayout]);
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = layouts.map(l => `
+    <button class="look ${l.key === newFaceLayout ? 'on' : ''}" type="button"
+            aria-pressed="${l.key === newFaceLayout}" onclick="setFaceLayout('${l.key}')">
+      <span class="thumb">${FACE_ART[l.key] || ''}</span>
+      <span class="nm">${l.label}</span>
+    </button>`).join('');
+}
+function renderFaceSlotPicker(s) {
+  const comps = s.face_complications || [];
+  const cds = s.countdowns || [];
+  const box = $('face-slots');
+  // Rebuilt only when the choices actually change -- every 2s poll otherwise
+  // recreated these <select> elements, which drops an open dropdown mid-pick.
+  const key = JSON.stringify([newFaceSlots, cds.map(c => [c.id, c.label])]);
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = newFaceSlots.map((slot, i) => `
+    <div>
+      <label>Slot ${i + 1}</label>
+      <select onchange="setFaceSlotKind(${i}, this.value)">
+        ${comps.map(c => `<option value="${c.key}" ${slot.kind === c.key ? 'selected' : ''}>${c.label}</option>`).join('')}
+      </select>
+      ${slot.kind === 'countdown' ? `
+      <select onchange="setFaceSlotCountdown(${i}, this.value)">
+        <option value="">Pick one…</option>
+        ${cds.map(cd => `<option value="${cd.id}" ${slot.countdown_id === cd.id ? 'selected' : ''}>${cd.label || 'Countdown'}</option>`).join('')}
+      </select>` : ''}
+    </div>`).join('');
+}
+
+async function addFace() {
+  const name = $('face-name').value.trim() || 'Face';
+  const note = $('face-note');
+  if (newFaceSlots.some(sl => sl.kind === 'countdown' && !sl.countdown_id)) {
+    note.textContent = 'Pick a countdown for every slot set to Countdown, or add one first.';
+    return;
+  }
+  const r = await fetch('/api/faces', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, layout: newFaceLayout, slots: newFaceSlots}),
+  });
+  if (r.ok) {
+    $('face-name').value = '';
+    note.textContent = '';
+    refresh();
+  } else {
+    note.textContent = 'Could not save that face: ' + ((await r.json()).detail || r.status);
+  }
+}
+const delFace = id => fetch('/api/faces/' + id, {method: 'DELETE'}).then(refresh);
+const toggleFaceActive = (id, on) => postJSON(`/api/faces/${id}/active?active=${on}`).then(refresh);
+
+function faceRow(s, f) {
+  const layout = (s.face_layouts || []).find(l => l.key === f.layout);
+  return `
+    <div class="lscard">
+      <div class="who">
+        <span class="nm">${f.name}</span>
+        <span class="st">${layout ? layout.label : f.layout}</span>
+      </div>
+      <label class="check" title="Include this face in the lifestyle rotation">
+        <input type="checkbox" ${f.active ? 'checked' : ''} onchange="toggleFaceActive('${f.id}', this.checked)">
+        active
+      </label>
+      <button class="del" onclick="delFace('${f.id}')" title="Delete">&times;</button>
+    </div>`;
+}
+function renderFaces(s) {
+  const faces = s.faces || [];
+  $('facelist').innerHTML = faces.map(f => faceRow(s, f)).join('')
+    || '<div class="empty">No faces yet — build one above.</div>';
+  $('face-count').textContent = faces.length || '';
+}
+
+// "2m ago" / "1h ago" -- how old the forecast on file is.
+function fmtAge(seconds) {
+  if (seconds == null) return '';
+  if (seconds < 90) return 'just now';
+  const m = Math.round(seconds / 60);
+  return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+}
+
+function renderLifestyle(s) {
+  const life = !!s.lifestyle_mode;
+  // The Lifestyle tab only exists while that's the mode; the sports tabs stay
+  // reachable either way so you can still set a lineup up with a clock on the
+  // wall.
+  $('tb-lifestyle').hidden = !life;
+  $('sports-idle-note').hidden = !life;
+  if (!life && currentTab === 'lifestyle') setTab('main');
+
+  $('life-alerts').checked = !!s.lifestyle_alerts;
+  $('life-alerts-note').textContent = s.lifestyle_alerts
+    ? 'A favourite team scoring still takes over the screen for a few seconds. '
+      + 'Bet and fantasy alerts stay quiet in this mode either way.'
+    : 'Nothing sports-related interrupts. Scores keep updating underneath, so '
+      + 'switching back to a sport is up to date immediately.';
+
+  $('clk-on').checked = !!s.clock_enabled;
+  $('clk-sec').checked = !!s.clock_seconds;
+  $('clk-date').checked = !!s.clock_show_date;
+  $('clk-dig').checked = !!s.clock_analog_digital;
+  // The dial window only means anything on the analog face.
+  $('clk-dig-wrap').hidden = s.clock_style !== 'analog';
+  renderClockPicker(s);
+
+  $('wx-on').checked = !!s.weather_enabled;
+  if (document.activeElement !== $('wx-loc')) $('wx-loc').value = s.weather_location || '';
+  $('wx-f').setAttribute('aria-pressed', String(s.weather_units !== 'c'));
+  $('wx-c').setAttribute('aria-pressed', String(s.weather_units === 'c'));
+  // Saying WHY a switched-on screen isn't appearing matters more than the
+  // reading itself: "on but never shows up" otherwise looks like a bug.
+  let wx;
+  if (wxError) wx = wxError;
+  else if (!s.weather_location) {
+    wx = s.weather_enabled
+      ? 'Switched on, but there is no place set yet — enter one and save it.'
+      : 'Enter a place and save it.';
+  } else if (!s.weather) {
+    wx = s.weather_failed ? 'Could not reach the weather service — retrying.' : 'No reading yet.';
+  } else {
+    wx = `${s.weather_resolved_name || s.weather_location} — ${s.weather.temp}°`
+       + `${s.weather_units === 'c' ? 'C' : 'F'}, ${s.weather.condition}`
+       + ` · ${fmtAge(s.weather_age)}`
+       + (s.weather_failed ? ' · last fetch failed, retrying' : '');
+  }
+  $('wx-note').textContent = wx;
+
+  $('msg-on').checked = !!s.message_enabled;
+  if (document.activeElement !== $('msg-text')) $('msg-text').value = s.message_text || '';
+  $('msg-note').textContent = s.message_enabled && !(s.message_text || '').trim()
+    ? 'Switched on, but empty — type something or it stays off the panel.' : '';
+
+  $('wx-time').checked = !!s.weather_show_time;
+  $('wx-cond').checked = !!s.weather_show_conditions;
+  $('wx-sun').checked = !!s.weather_show_sun;
+  $('wx-hilo').checked = !!s.weather_show_hilo;
+
+  renderCountdowns(s);
+  renderFaceLayoutPicker(s);
+  renderFaceSlotPicker(s);
+  renderFaces(s);
+  for (const screen of (s.theme_screens || [])) renderTheme(s, screen);
+}
+
+function render(s) {
+  if (!s) return;
+  S = s;
+
+  // The top segment is the panel's MODE: one of the three sports, or
+  // lifestyle. Within sports it also picks whose settings are on screen, and
+  // the dot marks the sports actually in the rotation (changed on Main) --
+  // none of them, while lifestyle has the panel.
+  for (const sp of ['mlb', 'nfl', 'cfb']) {
+    const b = $('m-' + sp);
+    b.setAttribute('aria-pressed', String(!s.lifestyle_mode && s.mode === sp));
+    b.classList.toggle('airing', !s.lifestyle_mode && (s.active_sports || []).includes(sp));
+  }
+  $('m-life').setAttribute('aria-pressed', String(!!s.lifestyle_mode));
+  renderSportCards(s);
+  renderFavOnly(s);
+
+  const demo = s.demo || {};
+  $('demo-btn').textContent = demo.running ? 'Stop demo' : 'Run demo';
+  $('demo-btn').classList.toggle('primary', !demo.running);
+  $('demo-note').textContent = demo.running ? `Playing: ${demo.step}` : DEMO_HELP;
+
+  $('schedmode').checked = !!s.schedule_mode;
+  renderSchedLive(s);
+  renderLookPicker(s);
+  const swl = (s.sports || []).filter(sp => (s.schedule_with_live || {})[sp]);
+  $('sum-schedmode').textContent = swl.length
+    ? 'also during live: ' + swl.map(x => x.toUpperCase()).join(' ')
+    : (s.schedule_mode ? 'upcoming games when idle' : 'idle screen when nothing is live');
+
+  syncSlider('rot', s.rotate_seconds);
+  syncSlider('br',  s.brightness);
+  syncSlider('al',  s.alert_seconds);
+  syncSlider('bd',  s.broadcast_delay);
+  syncSlider('plpage', s.parlay_page_seconds);
+  renderParlayContext(s);
+
+  $('incfin').checked = s.include_finished;
+  renderLogoToggles(s);
+  $('alon').checked   = s.alerts_enabled;
+  $('unpin').hidden   = !s.pinned_id;
+
+  // Collapsed-fold summaries, so the common case never needs opening.
+  $('sum-display').textContent = `${s.rotate_seconds}s · ${s.brightness}%`
+    + (s.include_finished ? ' · +finished' : '');
+  $('sum-alerts').textContent = (s.alerts_enabled ? 'on' : 'off') + ` · ${s.alert_seconds}s`;
+  $('sum-delay').textContent = fmtDelay(s.broadcast_delay);
+
+  const bdNote = $('bd-note');
+  if (s.broadcast_delay > 0) {
+    const actual = s.broadcast_delay_actual;
+    // The feed only moves when a poll lands, so the panel can be a little
+    // STALER than the slider says -- never fresher. Say so rather than
+    // implying more precision than the data has.
+    const behind = actual != null ? fmtDelay(actual, true) : '?';
+    const extra = actual != null && actual > s.broadcast_delay + 1
+      ? ` (rounded up to the last update — the feed refreshes every ${s.mode === 'mlb' ? '10' : '12'}s or so)`
+      : '';
+    bdNote.innerHTML = `Everything here and on the panel is what was true <b>${behind}</b> ago${extra}. `
+      + `Set this to whatever your broadcast lags behind live.`;
+  } else {
+    bdNote.textContent = 'Off — the panel shows the score the instant the API reports it. '
+      + 'Most streaming services run 15–60s behind live; a DVR pause can run minutes. '
+      + 'Set this to roughly match so the panel never spoils a play before it airs. Up to 5 minutes.';
+  }
+
+  renderWifi(s);
+  renderOnAir(s);
+  renderCfb(s);
+  renderFavorites(s);
+  renderLifestyle(s);
+  renderBets(s);
+  renderFantasy(s);
+  renderStyleRows(s);
+  renderReplay(s);
+
+  $('counts').textContent = `${s.counts.live} live / ${s.counts.total}`;
+  $('pulse').className = 'pulse ' + (s.last_error ? 'err' : s.last_poll ? 'ok' : '');
+  $('stale').textContent = s.stale_seconds == null ? 'loading' : s.stale_seconds + 's ago';
+  $('err').textContent = s.last_error || '';
+  $('sum-games').textContent = s.games.length
+    ? `${s.counts.live} live / ${s.counts.total} — click to pin one to the panel`
+    : '';
+
+  const multi = (s.active_sports || []).length > 1;
+  $('games').innerHTML = s.games.length ? s.games.map(g => {
+    const showing = g.id === s.now_showing, pinned = g.id === s.pinned_id;
+    const live = g.state === 'live';
+    // Favourites are per sport, so with several sports on the panel the star
+    // has to be checked against the game's OWN sport -- not the focused tab's.
+    const favs = (s.all_favorites || {})[g.sport] || [];
+    const ranks = { away: g.detail.rank_away, home: g.detail.rank_home };
+    return `
+    <div class="game ${showing ? 'showing' : ''} ${pinned ? 'pinned' : ''}" onclick="pin('${g.id}')">
+      <div class="spine" style="background:linear-gradient(${g.away.color} 50%, ${g.home.color} 50%)"></div>
+      <div class="teams">
+        ${[['away', g.away], ['home', g.home]].map(([side, t]) => `
+          <div class="team">
+            ${g.sport === 'cfb' ? `<span class="rank">${ranks[side] || ''}</span>` : ''}
+            <span class="abbrev ${favs.includes(t.abbrev) ? 'fav' : ''}">${t.abbrev}</span>
+            <span class="score">${g.state === 'pre' ? '' : t.score}</span>
+            ${g.state === 'pre' && t.record ? `<span class="rec">${t.record}</span>` : ''}
+          </div>`).join('')}
+      </div>
+      <div class="meta">
+        ${multi ? `<div class="sporttag">${g.sport.toUpperCase()}</div>` : ''}
+        <div class="period ${live ? 'live' : ''}">${periodLabel(g)}</div>
+        <div>${detailLine(g)}</div>
+      </div>
+      <div class="badge ${pinned ? 'on' : showing ? 'showing' : ''}">
+        ${pinned ? 'pinned' : showing ? 'on air' : 'pin'}
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty">No ${(s.active_sports || []).map(x => x.toUpperCase()).join(' / ') || '—'} games loaded${s.last_error ? '' : ' yet'}.</div>`;
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

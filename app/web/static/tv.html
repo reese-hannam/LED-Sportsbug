@@ -1,0 +1,206 @@
+<!doctype html>
+<!--
+  TV mode: the panel, scaled to fill whatever screen you're holding.
+
+  There is no second renderer here and no extra cost on the render loop. The
+  emulator already broadcasts every finished frame over a WebSocket (and allows
+  any origin), so this page is a viewer: take the frame, hand it to an <img>,
+  and let `object-fit: contain` do the letterboxing. That's what keeps the
+  aspect ratio exactly right on a 16:9 laptop and a 4:3 iPad without either of
+  them being a special case.
+
+  On real hardware there is no emulator and therefore no socket -- the panel
+  itself is the display. The page says so rather than spinning forever.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sports Bug — TV</title>
+<!-- viewport-fit=cover fills an iPad's rounded corners; user-scalable=no stops
+     a double-tap from zooming the "TV" off-centre. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: #000; overflow: hidden;
+    /* No bounce-scroll or text selection -- this is a display, not a document. */
+    overscroll-behavior: none; -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  body { display: flex; align-items: center; justify-content: center; cursor: none; }
+  body.ui { cursor: default; }
+
+  /* The panel. `contain` is the whole trick: fill as much of the screen as
+     possible, never distort. The padding keeps it off the very edge on a
+     laptop, and is dropped in fullscreen where edge-to-edge is the point. */
+  #screen {
+    width: 100%; height: 100%;
+    object-fit: contain;
+    padding: 2vmin;
+    /* Keep the LEDs square-edged at any scale. Browsers disagree on the
+       keyword, so both spellings are given. */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+  }
+  body.full #screen { padding: 0; }
+  #screen.off { opacity: 0.25; transition: opacity .4s; }
+
+  /* Chrome fades out so a demo isn't framed by buttons. Any pointer move,
+     tap or key brings it back. */
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; padding-top: max(14px, env(safe-area-inset-top));
+    background: linear-gradient(#000000cc, #00000000);
+    color: #7b8394; font-size: 13px; letter-spacing: .04em;
+    opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  body.ui #bar { opacity: 1; pointer-events: auto; }
+  #bar .sp { flex: 1; }
+  #bar b { color: #ffb000; font-weight: 600; }
+  button {
+    font: inherit; color: #e9ebf0; background: #131519;
+    border: 1px solid #333844; border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  button:hover { border-color: #ffb000; color: #ffb000; }
+
+  /* Connection state. Only ever visible when something is actually wrong. */
+  #msg {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    color: #7b8394; font-size: 15px; text-align: center; line-height: 1.7;
+    max-width: 80vw; display: none;
+  }
+  #msg.show { display: block; }
+  #msg b { color: #ffb000; display: block; margin-bottom: 6px; font-size: 17px; }
+  #msg small { color: #565d6c; font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<img id="screen" alt="LED panel">
+
+<div id="bar">
+  <b>SPORTS BUG</b>
+  <span id="stat">connecting…</span>
+  <span class="sp"></span>
+  <button id="fs">Fullscreen</button>
+  <button onclick="location.href='/'">Control</button>
+</div>
+
+<div id="msg"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const img = $('screen');
+
+// The emulator's frame socket lives beside the control server on the same
+// host, which is what makes this work from an iPad on the LAN rather than only
+// on the machine running it.
+const PANEL_PORT = new URLSearchParams(location.search).get('port') || '8888';
+const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:${PANEL_PORT}/websocket`;
+
+let sock = null, retry = null, lastFrame = 0, frames = 0, url = null;
+
+function show(title, detail) {
+  $('msg').innerHTML = title ? `<b>${title}</b>${detail || ''}` : '';
+  $('msg').classList.toggle('show', !!title);
+  img.classList.toggle('off', !!title);
+}
+
+function connect() {
+  clearTimeout(retry);
+  try { sock = new WebSocket(WS_URL); } catch (e) { return schedule(); }
+  sock.binaryType = 'blob';
+
+  sock.onopen = () => { $('stat').textContent = 'live'; show(''); };
+
+  sock.onmessage = ev => {
+    // One object URL per frame would leak fast at 30fps, so the previous one
+    // is revoked as soon as the next is in hand.
+    const next = URL.createObjectURL(ev.data);
+    const prev = url;
+    url = next;
+    img.src = next;
+    if (prev) URL.revokeObjectURL(prev);
+    lastFrame = Date.now();
+    frames++;
+  };
+
+  sock.onclose = () => schedule('Panel disconnected');
+  sock.onerror = () => { try { sock.close(); } catch (e) {} };
+}
+
+function schedule(why) {
+  $('stat').textContent = 'reconnecting…';
+  show(why || 'Waiting for the panel',
+       'Make sure the app is running.<br>'
+       + `<small>Looking for the emulator on port ${PANEL_PORT} of this machine. `
+       + 'On real hardware the panel is the display, so there is no stream to show here.</small>');
+  clearTimeout(retry);
+  retry = setTimeout(connect, 1500);
+}
+
+// A socket can stay open while frames stop arriving; the frame clock is what
+// actually says whether the panel is alive.
+setInterval(() => {
+  if (sock && sock.readyState === WebSocket.OPEN && Date.now() - lastFrame > 4000) {
+    show('Panel stopped sending frames', 'The app may have exited.');
+    $('stat').textContent = 'stalled';
+  }
+}, 2000);
+
+setInterval(() => {
+  if (frames) { $('stat').textContent = `live · ${frames / 2 | 0} fps`; frames = 0; }
+}, 2000);
+
+/* ---- chrome: visible on interaction, gone while you watch -------------- */
+let hide = null;
+function wake() {
+  document.body.classList.add('ui');
+  clearTimeout(hide);
+  hide = setTimeout(() => document.body.classList.remove('ui'), 2600);
+}
+for (const ev of ['pointermove', 'pointerdown', 'keydown']) {
+  addEventListener(ev, wake, {passive: true});
+}
+wake();
+
+/* ---- fullscreen ------------------------------------------------------- */
+function toggleFull() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.().catch(() => {});
+}
+$('fs').onclick = toggleFull;
+addEventListener('dblclick', toggleFull);
+addEventListener('keydown', e => {
+  if (e.key === 'f' || e.key === 'F') toggleFull();
+  if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
+});
+document.addEventListener('fullscreenchange', () => {
+  document.body.classList.toggle('full', !!document.fullscreenElement);
+  $('fs').textContent = document.fullscreenElement ? 'Exit' : 'Fullscreen';
+});
+
+/* ---- keep the screen awake -------------------------------------------- */
+// A demo that dims out after 30 seconds isn't a demo. Best-effort: this needs
+// a secure context, so over plain HTTP on a LAN it simply won't be granted.
+let lock = null;
+async function keepAwake() {
+  try { lock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+}
+keepAwake();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { keepAwake(); if (!sock || sock.readyState > 1) connect(); }
+});
+
+connect();
+</script>
+</body>
+</html>
