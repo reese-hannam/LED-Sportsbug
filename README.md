@@ -46,7 +46,7 @@ page on your phone. Nothing to install on the phone, no account, no API keys.
 | Part | What to get | Notes |
 |---|---|---|
 | LED panels | 2× **P3 64×64 RGB HUB75** (1/32 scan, FM6126A driver chip) | Chained side by side into one 128×64 display, 384 × 192 mm |
-| Computer | **Raspberry Pi Zero 2 WH** | Any Pi with a 40-pin header works. The Zero 2 is plenty. |
+| Computer | **Raspberry Pi Zero 2 WH** | Any Pi with a 40-pin header works, except the Pi 5, which the LED driver doesn't support. The Zero 2 is plenty. |
 | HUB75 adapter | **SEENGREAT RGB Matrix Adapter Rev 3.0** | Sits between the Pi header and the panel ribbon. Adafruit HATs also work (see [Tuning](#tuning)). |
 | Panel power | **5 V, 10 A** supply | Two panels draw up to 4 A each at full white |
 | Pi power | Its own **5 V, 2.5 A** USB supply | Don't share it with the panels. See below. |
@@ -412,5 +412,5 @@ tools/               panel test, self-check, logo download, game recorder, previ
 - [Open-Meteo](https://open-meteo.com): weather.
 
 This project isn't affiliated with or endorsed by the NFL, MLB, the NCAA,
-ESPN or any team. Team names and logos belong to their owners. The logos
-aren't included in this repository. Your Pi downloads them at install.
+ESPN or any team. Team names and logos belong to their owners. The logo
+files aren't included in this repository. Your Pi downloads them at install.

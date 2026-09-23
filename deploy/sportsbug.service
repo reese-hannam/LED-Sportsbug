@@ -1,10 +1,9 @@
 # Run the panel at boot.
 #
-#   sudo cp deploy/sportsbug.service /etc/systemd/system/
-#   sudo systemctl enable --now sportsbug
-#   journalctl -u sportsbug -f          # logs
+# deploy/install-pi.sh installs this for you, rewriting WorkingDirectory and
+# ExecStart to wherever the checkout is. The paths below are placeholders.
 #
-# Adjust WorkingDirectory if the checkout isn't at /home/pi/led-sports-bug.
+#   journalctl -u sportsbug -f          # logs
 
 [Unit]
 Description=LED Sports Bug panel

@@ -277,7 +277,7 @@ if ! done_with bindings; then
   fi
 
   "$VENV_PY" -c 'import rgbmatrix' 2>/dev/null || die \
-    "The bindings did not install. Send me the log: $LOG"
+    "The bindings did not install. See the log: $LOG"
   info "the venv can drive the panel"
   mark bindings
 fi
