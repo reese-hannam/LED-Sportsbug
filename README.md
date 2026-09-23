@@ -7,6 +7,10 @@ page on your phone. Nothing to install on the phone, no account, no API keys.
 
 ![What the panel shows](docs/panel-gallery.png)
 
+### Watch it in action
+
+[![LED Sportsbug demo video](https://img.youtube.com/vi/D806tV21MXU/maxresdefault.jpg)](https://youtu.be/D806tV21MXU)
+
 **What it does**
 
 - **Live score bugs** for NFL, MLB and college football: score, clock, down and
